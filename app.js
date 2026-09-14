@@ -1,5 +1,7 @@
+window.ABS_APP_READY = '1.3.4';
 const API = '/api/gas';
 const API_TIMEOUT_MS = 25000;
+const FRONTEND_VERSION = '1.3.4';
 
 let token = localStorage.getItem('abs_token') || '';
 let currentUser = null;
@@ -16,10 +18,7 @@ const $ = (id) => document.getElementById(id);
 
 function toast(message) {
   const t = $('toast');
-  if (!t) {
-    console.warn(message);
-    return;
-  }
+  if (!t) { console.warn(message); return; }
   t.textContent = message;
   t.classList.add('show');
   clearTimeout(window.__toastTimer);
@@ -51,7 +50,6 @@ function setLoginLoading(active, text) {
     btn.classList.toggle('loading', active);
   }
   if (btnText) btnText.textContent = active ? 'Memproses...' : 'Masuk';
-
   if (status) status.classList.toggle('hidden', !active);
   if (statusText) statusText.textContent = text || 'Menghubungkan ke server...';
 }
@@ -69,20 +67,15 @@ async function api(action, payload = {}) {
     });
 
     let json;
-    try {
-      json = await response.json();
-    } catch (_) {
-      throw new Error('Respons server tidak dapat dibaca.');
-    }
+    try { json = await response.json(); }
+    catch (_) { throw new Error('Respons server tidak dapat dibaca.'); }
 
     if (!response.ok && json?.message) throw new Error(json.message);
     if (!json.ok) throw new Error(json.message || 'Proses gagal.');
-
     return json.data;
+
   } catch (e) {
-    if (e?.name === 'AbortError') {
-      throw new Error('Server terlalu lama merespons. Coba lagi.');
-    }
+    if (e?.name === 'AbortError') throw new Error('Server terlalu lama merespons. Coba lagi.');
     throw e;
   } finally {
     clearTimeout(timeoutId);
@@ -120,13 +113,13 @@ async function login() {
     });
 
     safeText('loginStatusText', 'Login berhasil, membuka aplikasi...');
-
     token = data.token;
     currentUser = data.user;
     localStorage.setItem('abs_token', token);
 
     setView(true);
     await afterLogin();
+
   } catch (e) {
     console.error('login:', e);
     toast(e.message);
@@ -139,10 +132,7 @@ async function login() {
 }
 
 async function logout() {
-  try {
-    if (token) await api('logout', {});
-  } catch (_) {}
-
+  try { if (token) await api('logout', {}); } catch (_) {}
   stopAdminGeoWatch();
   token = '';
   currentUser = null;
@@ -152,31 +142,19 @@ async function logout() {
 }
 
 async function afterLogin() {
-  try {
-    if (!currentUser) currentUser = await api('me', {});
+  if (!currentUser) currentUser = await api('me', {});
+  safeText('helloName', currentUser?.nama || 'Pegawai');
 
-    safeText('helloName', currentUser?.nama || 'Pegawai');
-
-    const adminNav = $('navAdmin');
-    if (adminNav) {
-      adminNav.classList.toggle(
-        'hidden',
-        !['ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role)
-      );
-    }
-
-    await showHome();
-  } catch (e) {
-    console.error('afterLogin:', e);
-    toast(e.message);
-    throw e;
+  const adminNav = $('navAdmin');
+  if (adminNav) {
+    adminNav.classList.toggle('hidden', !['ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role));
   }
+
+  await showHome();
 }
 
 function navActive(id) {
-  document.querySelectorAll('.bottom-nav button').forEach((btn) => {
-    btn.classList.remove('active');
-  });
+  document.querySelectorAll('.bottom-nav button').forEach((btn) => btn.classList.remove('active'));
   $(id)?.classList.add('active');
 }
 
@@ -187,8 +165,7 @@ function actionCard(type, title, subtitle, ref = '') {
       <h3>${title}</h3>
       <div class="muted">${subtitle || ''}</div>
       <div style="height:10px"></div>
-      <button class="btn primary"
-        onclick="openAttendance('${type}','${ref}','${safeTitle}')">
+      <button class="btn primary" onclick="openAttendance('${type}','${ref}','${safeTitle}')">
         Mulai Absen
       </button>
     </div>
@@ -198,7 +175,6 @@ function actionCard(type, title, subtitle, ref = '') {
 async function showHome() {
   stopAdminGeoWatch();
   navActive('navHome');
-
   const m = $('mainContent');
   if (!m) return;
 
@@ -246,12 +222,8 @@ async function showHome() {
     }
 
     (homeData?.activeActivities || []).forEach((x) => {
-      html += actionCard(
-        'KEGIATAN',
-        `Absen Kegiatan: ${x.nama}`,
-        `${x.jamMulai || '-'} - ${x.jamSelesai || '-'}`,
-        x.idKegiatan
-      );
+      html += actionCard('KEGIATAN', `Absen Kegiatan: ${x.nama}`,
+        `${x.jamMulai || '-'} - ${x.jamSelesai || '-'}`, x.idKegiatan);
     });
 
     (homeData?.assignments || []).forEach((x) => {
@@ -266,7 +238,7 @@ async function showHome() {
     safeHTML(m, html);
   } catch (e) {
     safeHTML(m, `<div class="card">${e.message}</div>`);
-    throw e;
+    toast(e.message);
   }
 }
 
@@ -315,9 +287,7 @@ async function openAttendance(type, ref, title) {
       safeText('gpsInfo', `Akurasi ±${Math.round(pos.coords.accuracy)} meter`);
       updateSubmitState();
     },
-    (err) => {
-      safeText('gpsStatus', 'GPS gagal: ' + err.message);
-    },
+    (err) => safeText('gpsStatus', 'GPS gagal: ' + err.message),
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
   );
 }
@@ -339,9 +309,7 @@ function captureSelfie() {
 
   canvas.width = 720;
   canvas.height = Math.round((720 * video.videoHeight) / video.videoWidth);
-
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
 
   selfieDataUrl = canvas.toDataURL('image/jpeg', 0.72);
   preview.src = selfieDataUrl;
@@ -387,7 +355,6 @@ async function submitAttendance() {
 
 function closeAttendance() {
   $('attendanceModal')?.classList.add('hidden');
-
   if (cameraStream) {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
@@ -397,23 +364,19 @@ function closeAttendance() {
 async function showHistory() {
   stopAdminGeoWatch();
   navActive('navHistory');
-
   const m = $('mainContent');
   if (!m) return;
-
   safeHTML(m, '<div class="card">Memuat...</div>');
 
   try {
     const rows = await api('history', { limit: 50 });
     safeHTML(m, `<div class="card"><h3>Riwayat Absensi</h3>${
-      rows.length
-        ? rows.map((r) => `
-          <div class="list-item">
-            <b>${r.jenis}</b>
-            <span class="badge ${r.status === 'TERLAMBAT' ? 'warn' : 'ok'}">${r.status}</span>
-            <div class="muted">${r.tanggal} • ${(r.waktu || '').slice(11,16)}</div>
-          </div>`).join('')
-        : '<div class="muted">Belum ada data.</div>'
+      rows.length ? rows.map((r) => `
+        <div class="list-item">
+          <b>${r.jenis}</b>
+          <span class="badge ${r.status === 'TERLAMBAT' ? 'warn' : 'ok'}">${r.status}</span>
+          <div class="muted">${r.tanggal} • ${(r.waktu || '').slice(11,16)}</div>
+        </div>`).join('') : '<div class="muted">Belum ada data.</div>'
     }</div>`);
   } catch (e) {
     safeHTML(m, `<div class="card">${e.message}</div>`);
@@ -423,7 +386,6 @@ async function showHistory() {
 async function showLeave() {
   stopAdminGeoWatch();
   navActive('navLeave');
-
   const m = $('mainContent');
   if (!m) return;
 
@@ -442,14 +404,12 @@ async function showLeave() {
   try {
     const rows = await api('my_leaves', {});
     safeHTML('leaveList', `<h3>Riwayat Pengajuan</h3>${
-      rows.length
-        ? rows.map((r) => `
-          <div class="list-item">
-            <b>${r.jenis}</b> <span class="badge">${r.status}</span>
-            <div class="muted">${r.mulai} s.d. ${r.selesai}</div>
-            <div>${r.alasan || ''}</div>
-          </div>`).join('')
-        : '<div class="muted">Belum ada pengajuan.</div>'
+      rows.length ? rows.map((r) => `
+        <div class="list-item">
+          <b>${r.jenis}</b> <span class="badge">${r.status}</span>
+          <div class="muted">${r.mulai} s.d. ${r.selesai}</div>
+          <div>${r.alasan || ''}</div>
+        </div>`).join('') : '<div class="muted">Belum ada pengajuan.</div>'
     }`);
   } catch (e) {
     safeHTML('leaveList', `<h3>Riwayat Pengajuan</h3><div>${e.message}</div>`);
@@ -466,9 +426,7 @@ async function submitLeave() {
     });
     toast('Pengajuan dikirim.');
     await showLeave();
-  } catch (e) {
-    toast(e.message);
-  }
+  } catch (e) { toast(e.message); }
 }
 
 async function showAdmin() {
@@ -503,25 +461,32 @@ async function showAdmin() {
       </div>
 
       <div class="card">
-        <h3>Lokasi Kantor & Radius</h3>
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <h3 style="margin:0">Lokasi Kantor & Radius</h3>
+          <span style="font-size:11px;background:#eef5ff;padding:5px 8px;border-radius:10px">v${FRONTEND_VERSION}</span>
+        </div>
 
+        <div style="height:16px"></div>
         <input id="cfgLocId" type="hidden" value="${kantor?.id || ''}">
         <input id="cfgLocName" placeholder="Nama lokasi" value="${kantor?.nama || 'Kantor DPUPR KSB'}">
         <textarea id="cfgLocAddress" placeholder="Alamat">${kantor?.alamat || ''}</textarea>
 
-        <button id="cfgGetLocationBtn" class="btn secondary" onclick="getAdminCurrentLocation()">
-          Ambil Lokasi Saya Sekarang
+        <button
+          id="cfgGetLocationBtn"
+          type="button"
+          onclick="getAdminCurrentLocation()"
+          style="width:100%;margin:12px 0;padding:16px;border:0;border-radius:14px;background:#FFD600;color:#12375b;font-size:16px;font-weight:800">
+          📍 Ambil Lokasi Saya Sekarang
         </button>
 
-        <div id="cfgGeoStatus" class="muted" style="margin:10px 0 12px">
-          Tekan tombol di atas saat berada di titik kantor.
+        <div id="cfgGeoStatus" style="margin:0 0 14px;color:#607089;font-size:14px">
+          Tekan tombol kuning saat berada di titik kantor.
         </div>
 
         <div class="grid2">
           <input id="cfgLat" placeholder="Latitude" inputmode="decimal" value="${kantor?.latitude ?? ''}">
           <input id="cfgLon" placeholder="Longitude" inputmode="decimal" value="${kantor?.longitude ?? ''}">
         </div>
-
         <div class="grid2">
           <input id="cfgRadius" placeholder="Radius meter" inputmode="numeric" value="${kantor?.radius ?? 100}">
           <input id="cfgAccuracy" placeholder="Batas akurasi GPS (m)" inputmode="numeric" value="${kantor?.akurasi ?? 30}">
@@ -567,10 +532,7 @@ async function showAdmin() {
         <h3>Buat Kegiatan</h3>
         <input id="adNama" placeholder="Nama kegiatan">
         <input id="adTanggal" type="date">
-        <div class="grid2">
-          <input id="adMulai" type="time">
-          <input id="adSelesai" type="time">
-        </div>
+        <div class="grid2"><input id="adMulai" type="time"><input id="adSelesai" type="time"></div>
         <select id="adLokasi">
           ${(locations || []).map(x => `<option value="${x.id}">${x.nama}</option>`).join('')}
         </select>
@@ -587,10 +549,7 @@ async function showAdmin() {
           <option value="DINAS_LUAR">DINAS LUAR</option>
         </select>
         <input id="tgNama" placeholder="Nama tugas">
-        <div class="grid2">
-          <input id="tgMulai" type="date">
-          <input id="tgSelesai" type="date">
-        </div>
+        <div class="grid2"><input id="tgMulai" type="date"><input id="tgSelesai" type="date"></div>
         <select id="tgMode">
           <option value="LOKASI_AKTUAL">Lokasi Aktual</option>
           <option value="RADIUS">Radius Lokasi</option>
@@ -614,7 +573,6 @@ function stopAdminGeoWatch() {
     navigator.geolocation.clearWatch(adminGeoWatchId);
   }
   adminGeoWatchId = null;
-
   if (adminGeoTimeout) clearTimeout(adminGeoTimeout);
   adminGeoTimeout = null;
 }
@@ -623,7 +581,7 @@ function resetAdminGeoButton() {
   const btn = $('cfgGetLocationBtn');
   if (!btn) return;
   btn.disabled = false;
-  btn.textContent = 'Ambil Lokasi Saya Sekarang';
+  btn.textContent = '📍 Ambil Lokasi Saya Sekarang';
 }
 
 function getAdminCurrentLocation() {
@@ -637,16 +595,13 @@ function getAdminCurrentLocation() {
   const btn = $('cfgGetLocationBtn');
   if (btn) {
     btn.disabled = true;
-    btn.textContent = 'Mencari lokasi...';
+    btn.textContent = '⏳ Mencari lokasi...';
   }
 
   safeText('cfgGeoStatus', 'Mengaktifkan GPS dan mencari titik terbaik...');
 
   let best = null;
-  const targetAccuracy = Math.max(
-    5,
-    Number($('cfgAccuracy')?.value || 30)
-  );
+  const targetAccuracy = Math.max(5, Number($('cfgAccuracy')?.value || 30));
 
   const acceptPosition = (pos) => {
     if (!best || pos.coords.accuracy < best.coords.accuracy) {
@@ -655,10 +610,8 @@ function getAdminCurrentLocation() {
       if ($('cfgLat')) $('cfgLat').value = Number(pos.coords.latitude).toFixed(7);
       if ($('cfgLon')) $('cfgLon').value = Number(pos.coords.longitude).toFixed(7);
 
-      safeText(
-        'cfgGeoStatus',
-        `Lokasi ditemukan • akurasi ±${Math.round(pos.coords.accuracy)} meter`
-      );
+      safeText('cfgGeoStatus',
+        `Lokasi ditemukan • akurasi ±${Math.round(pos.coords.accuracy)} meter`);
     }
 
     if (pos.coords.accuracy <= targetAccuracy) {
@@ -684,11 +637,7 @@ function getAdminCurrentLocation() {
   adminGeoWatchId = navigator.geolocation.watchPosition(
     acceptPosition,
     failPosition,
-    {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 12000
-    }
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
   );
 
   adminGeoTimeout = setTimeout(() => {
@@ -696,10 +645,8 @@ function getAdminCurrentLocation() {
     resetAdminGeoButton();
 
     if (best) {
-      safeText(
-        'cfgGeoStatus',
-        `Lokasi digunakan • akurasi terbaik ±${Math.round(best.coords.accuracy)} meter`
-      );
+      safeText('cfgGeoStatus',
+        `Lokasi digunakan • akurasi terbaik ±${Math.round(best.coords.accuracy)} meter`);
       toast('Lokasi terbaik sudah diambil.');
     } else {
       safeText('cfgGeoStatus', 'GPS belum menemukan lokasi. Coba lagi.');
@@ -739,8 +686,8 @@ async function saveOfficeLocation() {
     const lat = $('cfgLat')?.value || '';
     const lon = $('cfgLon')?.value || '';
 
-    if (!lat || !lon) {
-      toast('Ambil lokasi terlebih dahulu.');
+    if (!lat || !lon || Number(lat) === 0 || Number(lon) === 0) {
+      toast('Tekan Ambil Lokasi Saya Sekarang terlebih dahulu.');
       return;
     }
 
@@ -759,9 +706,7 @@ async function saveOfficeLocation() {
     stopAdminGeoWatch();
     toast('Lokasi kantor & radius tersimpan.');
     await showAdmin();
-  } catch (e) {
-    toast(e.message);
-  }
+  } catch (e) { toast(e.message); }
 }
 
 async function saveSchedule() {
@@ -782,9 +727,7 @@ async function saveSchedule() {
 
     toast('Jadwal kerja tersimpan.');
     await showAdmin();
-  } catch (e) {
-    toast(e.message);
-  }
+  } catch (e) { toast(e.message); }
 }
 
 async function createActivity() {
@@ -802,9 +745,7 @@ async function createActivity() {
 
     toast('Kegiatan aktif.');
     await showAdmin();
-  } catch (e) {
-    toast(e.message);
-  }
+  } catch (e) { toast(e.message); }
 }
 
 async function createAssignment() {
@@ -822,15 +763,12 @@ async function createAssignment() {
 
     toast('Penugasan disimpan.');
     await showAdmin();
-  } catch (e) {
-    toast(e.message);
-  }
+  } catch (e) { toast(e.message); }
 }
 
 function showAccount() {
   stopAdminGeoWatch();
   navActive('navAccount');
-
   const m = $('mainContent');
   if (!m) return;
 
