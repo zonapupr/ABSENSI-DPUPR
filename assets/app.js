@@ -1,22 +1,764 @@
-const API='/api/gas',$=x=>document.getElementById(x);let token=localStorage.getItem('abs_token')||'',user=null,home=null,att=null,pos=null,selfie='',stream=null;
-function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500)}
-async function api(action,payload={}){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,token,payload})}),j=await r.json();if(!j.ok)throw new Error(j.message||'Gagal');return j.data}
-function view(on){$('login').classList.toggle('hidden',on);$('app').classList.toggle('hidden',!on)}
-async function doLogin(){try{const d=await api('login',{username:$('username').value,pin:$('pin').value,deviceInfo:navigator.userAgent});token=d.token;user=d.user;localStorage.setItem('abs_token',token);view(true);boot()}catch(e){toast(e.message)}}
-async function doLogout(){try{await api('logout',{})}catch(e){}token='';user=null;localStorage.removeItem('abs_token');view(false)}
-async function boot(){try{if(!user)user=await api('me',{});$('name').textContent=user.nama;if(['ADMIN','SUPER_ADMIN'].includes(user.role))$('nAdmin').classList.remove('hidden');showHome()}catch(e){doLogout();toast(e.message)}}
-function action(type,title,sub,ref=''){return `<div class="action"><h3>${title}</h3><div class="muted">${sub}</div><br><button class="btn primary" onclick="openAtt('${type}','${ref}','${title.replace(/'/g,"\\'")}')">Mulai Absen</button></div>`}
-async function showHome(){try{home=await api('home',{});let h=`<div class="hero"><small>${home.server.day}</small><div class="time">${home.server.time.slice(0,5)}</div><div>${home.server.date}</div></div>`;const s=home.schedule,a=home.attendance;h+=`<div class="card"><h3>Jadwal Hari Ini</h3>${s?`<div class="grid"><div class="stat">Masuk<b>${s.jamMasuk}</b></div><div class="stat">Pulang<b>${s.jamPulang}</b></div></div>`:'<div class="muted">Belum ada jadwal.</div>'}</div>`;h+=`<div class="card"><h3>Status Hari Ini</h3><div class="grid"><div class="stat">Masuk<b>${a.masuk?a.masuk.waktu.slice(11,16):'--:--'}</b></div><div class="stat">Pulang<b>${a.pulang?a.pulang.waktu.slice(11,16):'--:--'}</b></div></div></div>`;if(s&&!a.masuk)h+=action('MASUK','Absen Masuk','GPS + selfie');else if(s&&!a.pulang)h+=action('PULANG','Absen Pulang','GPS + selfie');(home.activities||[]).forEach(x=>h+=action('KEGIATAN','Kegiatan: '+x.nama,x.jamMulai+' - '+x.jamSelesai,x.id));(home.tasks||[]).forEach(x=>h+=action(x.jenis,(x.jenis==='DINAS_LUAR'?'Dinas Luar: ':'Tugas Lapangan: ')+x.nama,x.mode==='LOKASI_AKTUAL'?'Lokasi aktual':'Radius lokasi',x.id));$('main').innerHTML=h}catch(e){$('main').innerHTML=`<div class="card">${e.message}</div>`}}
-async function openAtt(type,ref,title){att={type,ref};pos=null;selfie='';$('attTitle').textContent=title;$('modal').classList.remove('hidden');$('saveAtt').disabled=true;$('gpsStatus').textContent='Mencari GPS...';$('preview').classList.add('hidden');$('camera').classList.remove('hidden');try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});$('camera').srcObject=stream}catch(e){toast('Kamera gagal dibuka')}navigator.geolocation.getCurrentPosition(p=>{pos=p.coords;$('gpsStatus').textContent='GPS ditemukan';$('gpsInfo').textContent='Akurasi ±'+Math.round(p.coords.accuracy)+' meter';ready() },e=>$('gpsStatus').textContent='GPS gagal: '+e.message,{enableHighAccuracy:true,timeout:15000,maximumAge:0})}
-function snap(){const v=$('camera'),c=$('canvas');c.width=720;c.height=Math.round(720*v.videoHeight/v.videoWidth)||960;c.getContext('2d').drawImage(v,0,0,c.width,c.height);selfie=c.toDataURL('image/jpeg',.72);$('preview').src=selfie;$('preview').classList.remove('hidden');$('camera').classList.add('hidden');ready()}
-function ready(){$('saveAtt').disabled=!(pos&&selfie)}
-async function saveAtt(){const b=$('saveAtt');b.disabled=true;b.textContent='Menyimpan...';try{const d=await api('attend',{jenisAbsen:att.type,idReferensi:att.ref,latitude:pos.latitude,longitude:pos.longitude,accuracy:pos.accuracy,selfieDataUrl:selfie,deviceTime:new Date().toISOString(),userAgent:navigator.userAgent});toast('Berhasil: '+d.status);closeAtt();showHome()}catch(e){toast(e.message);b.disabled=false}b.textContent='Simpan Absen'}
-function closeAtt(){$('modal').classList.add('hidden');if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
-async function showHistory(){try{const r=await api('history',{});$('main').innerHTML=`<div class="card"><h3>Riwayat Absensi</h3>${r.length?r.map(x=>`<div class="list"><b>${x.jenis}</b> — ${x.status}<div class="muted">${x.tanggal} • ${x.waktu.slice(11,16)}</div></div>`).join(''):'Belum ada data'}</div>`}catch(e){toast(e.message)}}
-async function showLeave(){$('main').innerHTML=`<div class="card"><h3>Izin / Sakit / Cuti</h3><select id="lj"><option>IZIN</option><option>SAKIT</option><option>CUTI</option></select><input id="lm" type="date"><input id="ls" type="date"><textarea id="la" placeholder="Alasan"></textarea><button class="btn primary" onclick="sendLeave()">Kirim</button></div><div id="ll" class="card">Memuat...</div>`;try{const r=await api('my_leaves',{});$('ll').innerHTML='<h3>Riwayat</h3>'+r.map(x=>`<div class="list"><b>${x.jenis}</b> — ${x.status}<div class="muted">${x.mulai} s.d. ${x.selesai}</div><div>${x.alasan}</div></div>`).join('')}catch(e){toast(e.message)}}
-async function sendLeave(){try{await api('submit_leave',{jenis:$('lj').value,tanggalMulai:$('lm').value,tanggalSelesai:$('ls').value,alasan:$('la').value});toast('Pengajuan dikirim');showLeave()}catch(e){toast(e.message)}}
-async function showAdmin(){try{const d=await api('admin_dashboard',{}),e=await api('admin_employees',{}),l=await api('admin_locations',{});$('main').innerHTML=`<div class="card"><h3>Dashboard Admin</h3><div class="grid"><div class="stat">Pegawai<b>${d.totalPegawai}</b></div><div class="stat">Transaksi<b>${d.totalTransaksi}</b></div><div class="stat">Masuk<b>${d.masuk}</b></div><div class="stat">Terlambat<b>${d.terlambat}</b></div></div></div><div class="card"><h3>Buat Kegiatan</h3><input id="kn" placeholder="Nama kegiatan"><input id="kd" type="date"><div class="grid"><input id="ks" type="time"><input id="ke" type="time"></div><select id="kl">${l.map(x=>`<option value="${x.id}">${x.nama}</option>`).join('')}</select><button class="btn primary" onclick="mkAct()">Aktifkan</button></div><div class="card"><h3>Buat Penugasan</h3><select id="tp">${e.map(x=>`<option value="${x.idPegawai}">${x.nama}</option>`).join('')}</select><select id="tj"><option>TUGAS_LAPANGAN</option><option>DINAS_LUAR</option></select><input id="tn" placeholder="Nama tugas"><input id="tm" type="date"><input id="ts" type="date"><select id="tmode"><option value="LOKASI_AKTUAL">Lokasi Aktual</option><option value="RADIUS">Radius</option></select><select id="tl"><option value="">-- lokasi opsional --</option>${l.map(x=>`<option value="${x.id}">${x.nama}</option>`).join('')}</select><button class="btn primary" onclick="mkTask()">Simpan</button></div>`}catch(e){toast(e.message)}}
-async function mkAct(){try{await api('admin_create_activity',{nama:$('kn').value,tanggal:$('kd').value,jamMulai:$('ks').value,jamSelesai:$('ke').value,idLokasi:$('kl').value});toast('Kegiatan aktif');showAdmin()}catch(e){toast(e.message)}}
-async function mkTask(){try{await api('admin_create_task',{idPegawai:$('tp').value,jenisTugas:$('tj').value,namaTugas:$('tn').value,tanggalMulai:$('tm').value,tanggalSelesai:$('ts').value,modeLokasi:$('tmode').value,idLokasi:$('tl').value});toast('Penugasan aktif');showAdmin()}catch(e){toast(e.message)}}
-function showAccount(){$('main').innerHTML=`<div class="card"><h3>${user.nama}</h3><div>${user.jabatan||'-'}</div><div class="muted">${user.bidang||''}</div><div class="list">NIP: ${user.nip||'-'}</div><div class="list">Role: ${user.role}</div></div>`}
-(async()=>{if(token){view(true);await boot()}else view(false)})()
+const API = '/api/gas';
+
+let token = localStorage.getItem('abs_token') || '';
+let currentUser = null;
+let homeData = null;
+let currentAttendance = null;
+let currentPosition = null;
+let selfieDataUrl = '';
+let cameraStream = null;
+
+const $ = (id) => document.getElementById(id);
+
+function toast(message) {
+  const t = $('toast');
+  if (!t) {
+    console.warn(message);
+    return;
+  }
+  t.textContent = message;
+  t.classList.add('show');
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+function safeHTML(target, html) {
+  const el = typeof target === 'string' ? $(target) : target;
+  if (!el) {
+    console.warn('Element tidak ditemukan:', target);
+    return false;
+  }
+  el.innerHTML = html;
+  return true;
+}
+
+function safeText(target, text) {
+  const el = typeof target === 'string' ? $(target) : target;
+  if (!el) return false;
+  el.textContent = text ?? '';
+  return true;
+}
+
+async function api(action, payload = {}) {
+  const response = await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, token, payload })
+  });
+
+  let json;
+  try {
+    json = await response.json();
+  } catch (_) {
+    throw new Error('Respons server tidak dapat dibaca.');
+  }
+
+  if (!json.ok) {
+    throw new Error(json.message || 'Proses gagal.');
+  }
+
+  return json.data;
+}
+
+function setView(loggedIn) {
+  const login = $('loginView');
+  const app = $('appView');
+  if (login) login.classList.toggle('hidden', loggedIn);
+  if (app) app.classList.toggle('hidden', !loggedIn);
+}
+
+async function login() {
+  try {
+    const username = $('username')?.value?.trim() || '';
+    const pin = $('pin')?.value?.trim() || '';
+
+    const data = await api('login', {
+      username,
+      pin,
+      deviceInfo: navigator.userAgent
+    });
+
+    token = data.token;
+    currentUser = data.user;
+    localStorage.setItem('abs_token', token);
+
+    setView(true);
+    await afterLogin();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function logout() {
+  try {
+    if (token) await api('logout', {});
+  } catch (_) {}
+
+  token = '';
+  currentUser = null;
+  homeData = null;
+  localStorage.removeItem('abs_token');
+  setView(false);
+}
+
+async function afterLogin() {
+  try {
+    if (!currentUser) {
+      currentUser = await api('me', {});
+    }
+
+    safeText('helloName', currentUser?.nama || 'Pegawai');
+
+    const adminNav = $('navAdmin');
+    if (adminNav) {
+      adminNav.classList.toggle(
+        'hidden',
+        !['ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role)
+      );
+    }
+
+    await showHome();
+  } catch (e) {
+    console.error(e);
+    toast(e.message);
+  }
+}
+
+function navActive(id) {
+  document.querySelectorAll('.bottom-nav button').forEach((btn) => {
+    btn.classList.remove('active');
+  });
+  const active = $(id);
+  if (active) active.classList.add('active');
+}
+
+function actionCard(type, title, subtitle, ref = '') {
+  const safeTitle = String(title).replace(/'/g, "\\'");
+  return `
+    <div class="action-card active">
+      <h3>${title}</h3>
+      <div class="muted">${subtitle || ''}</div>
+      <div style="height:10px"></div>
+      <button class="btn primary"
+        onclick="openAttendance('${type}','${ref}','${safeTitle}')">
+        Mulai Absen
+      </button>
+    </div>
+  `;
+}
+
+async function showHome() {
+  navActive('navHome');
+
+  const m = $('mainContent');
+  if (!m) {
+    console.error('mainContent tidak ditemukan');
+    return;
+  }
+
+  safeHTML(m, '<div class="card">Memuat...</div>');
+
+  try {
+    homeData = await api('home', {});
+
+    const s = homeData?.schedule || null;
+    const a = homeData?.attendance || {};
+    const server = homeData?.server || {};
+
+    let html = `
+      <div class="hero">
+        <div class="small">${server.day || '-'}</div>
+        <div class="time">${(server.time || '--:--').slice(0, 5)}</div>
+        <div class="date">${server.date || '-'}</div>
+      </div>
+    `;
+
+    html += `
+      <div class="card">
+        <h3>Jadwal Hari Ini</h3>
+        ${
+          s
+            ? `
+              <div class="grid2">
+                <div class="stat">
+                  <span class="muted">Masuk</span>
+                  <b>${s.jamMasuk || '-'}</b>
+                </div>
+                <div class="stat">
+                  <span class="muted">Pulang</span>
+                  <b>${s.jamPulang || '-'}</b>
+                </div>
+              </div>
+            `
+            : '<div class="muted">Belum ada jadwal aktif untuk hari ini.</div>'
+        }
+      </div>
+    `;
+
+    html += `
+      <div class="card">
+        <h3>Status Hari Ini</h3>
+        <div class="grid2">
+          <div class="stat">
+            <span class="muted">Masuk</span>
+            <b>${a?.masuk?.waktu ? a.masuk.waktu.slice(11, 16) : '--:--'}</b>
+          </div>
+          <div class="stat">
+            <span class="muted">Pulang</span>
+            <b>${a?.pulang?.waktu ? a.pulang.waktu.slice(11, 16) : '--:--'}</b>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (s) {
+      if (!a?.masuk) {
+        html += actionCard('MASUK', 'Absen Masuk', 'GPS + selfie');
+      } else if (!a?.pulang) {
+        html += actionCard('PULANG', 'Absen Pulang', 'GPS + selfie');
+      }
+    }
+
+    (homeData?.activeActivities || []).forEach((x) => {
+      html += actionCard(
+        'KEGIATAN',
+        `Absen Kegiatan: ${x.nama}`,
+        `${x.jamMulai || '-'} - ${x.jamSelesai || '-'}`,
+        x.idKegiatan
+      );
+    });
+
+    (homeData?.assignments || []).forEach((x) => {
+      html += actionCard(
+        x.jenisTugas,
+        `${x.jenisTugas === 'DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan'}: ${x.namaTugas}`,
+        x.modeLokasi === 'LOKASI_AKTUAL' ? 'Lokasi aktual' : 'Radius lokasi',
+        x.idTugas
+      );
+    });
+
+    safeHTML(m, html);
+  } catch (e) {
+    console.error('showHome:', e);
+    safeHTML(m, `<div class="card">${e.message}</div>`);
+    toast(e.message);
+  }
+}
+
+async function openAttendance(type, ref, title) {
+  currentAttendance = { type, ref, title };
+  currentPosition = null;
+  selfieDataUrl = '';
+
+  const modal = $('attendanceModal');
+  const camera = $('camera');
+  const preview = $('preview');
+  const submit = $('submitAttendBtn');
+
+  if (!modal || !camera || !preview || !submit) {
+    toast('Komponen absensi belum lengkap.');
+    return;
+  }
+
+  preview.classList.add('hidden');
+  camera.classList.remove('hidden');
+  safeText('attTitle', title || 'Absensi');
+  modal.classList.remove('hidden');
+  submit.disabled = true;
+
+  safeText('gpsStatus', 'Mencari lokasi...');
+  safeText('gpsInfo', '');
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false
+    });
+    camera.srcObject = cameraStream;
+  } catch (e) {
+    console.error(e);
+    toast('Kamera tidak dapat dibuka.');
+  }
+
+  if (!navigator.geolocation) {
+    safeText('gpsStatus', 'GPS tidak didukung perangkat.');
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      currentPosition = pos.coords;
+      safeText('gpsStatus', 'GPS ditemukan');
+      safeText(
+        'gpsInfo',
+        `Akurasi ±${Math.round(pos.coords.accuracy)} meter`
+      );
+      updateSubmitState();
+    },
+    (err) => {
+      safeText('gpsStatus', 'GPS gagal: ' + err.message);
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
+    }
+  );
+}
+
+function captureSelfie() {
+  const video = $('camera');
+  const canvas = $('snapshot');
+  const preview = $('preview');
+
+  if (!video || !canvas || !preview) {
+    toast('Kamera belum siap.');
+    return;
+  }
+
+  if (!video.videoWidth || !video.videoHeight) {
+    toast('Tunggu kamera siap beberapa detik.');
+    return;
+  }
+
+  canvas.width = 720;
+  canvas.height = Math.round((720 * video.videoHeight) / video.videoWidth);
+
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  selfieDataUrl = canvas.toDataURL('image/jpeg', 0.72);
+  preview.src = selfieDataUrl;
+  preview.classList.remove('hidden');
+  video.classList.add('hidden');
+
+  updateSubmitState();
+}
+
+function updateSubmitState() {
+  const submit = $('submitAttendBtn');
+  if (submit) {
+    submit.disabled = !(currentPosition && selfieDataUrl);
+  }
+}
+
+async function submitAttendance() {
+  const btn = $('submitAttendBtn');
+  if (!btn || !currentAttendance || !currentPosition) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+
+  try {
+    const data = await api('attend', {
+      jenisAbsen: currentAttendance.type,
+      idReferensi: currentAttendance.ref,
+      latitude: currentPosition.latitude,
+      longitude: currentPosition.longitude,
+      accuracy: currentPosition.accuracy,
+      selfieDataUrl,
+      deviceTime: new Date().toISOString(),
+      userAgent: navigator.userAgent
+    });
+
+    toast(`Berhasil: ${data.status}`);
+    closeAttendance();
+    await showHome();
+  } catch (e) {
+    console.error(e);
+    toast(e.message);
+    btn.disabled = false;
+  } finally {
+    btn.textContent = 'Simpan Absen';
+  }
+}
+
+function closeAttendance() {
+  const modal = $('attendanceModal');
+  if (modal) modal.classList.add('hidden');
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+}
+
+async function showHistory() {
+  navActive('navHistory');
+  const m = $('mainContent');
+  if (!m) return;
+
+  safeHTML(m, '<div class="card">Memuat...</div>');
+
+  try {
+    const rows = await api('history', { limit: 50 });
+
+    safeHTML(
+      m,
+      `<div class="card">
+        <h3>Riwayat Absensi</h3>
+        ${
+          rows.length
+            ? rows
+                .map(
+                  (r) => `
+                    <div class="list-item">
+                      <b>${r.jenis}</b>
+                      <span class="badge ${r.status === 'TERLAMBAT' ? 'warn' : 'ok'}">
+                        ${r.status}
+                      </span>
+                      <div class="muted">${r.tanggal} • ${(r.waktu || '').slice(11, 16)}</div>
+                    </div>
+                  `
+                )
+                .join('')
+            : '<div class="muted">Belum ada data.</div>'
+        }
+      </div>`
+    );
+  } catch (e) {
+    safeHTML(m, `<div class="card">${e.message}</div>`);
+  }
+}
+
+async function showLeave() {
+  navActive('navLeave');
+  const m = $('mainContent');
+  if (!m) return;
+
+  safeHTML(
+    m,
+    `
+    <div class="card">
+      <h3>Pengajuan Izin / Sakit / Cuti</h3>
+      <select id="lvJenis">
+        <option>IZIN</option>
+        <option>SAKIT</option>
+        <option>CUTI</option>
+      </select>
+      <input id="lvMulai" type="date">
+      <input id="lvSelesai" type="date">
+      <textarea id="lvAlasan" placeholder="Alasan"></textarea>
+      <button class="btn primary" onclick="submitLeave()">Kirim Pengajuan</button>
+    </div>
+    <div id="leaveList" class="card">
+      <h3>Riwayat Pengajuan</h3>
+      <div class="muted">Memuat...</div>
+    </div>
+    `
+  );
+
+  try {
+    const rows = await api('my_leaves', {});
+    const leaveList = $('leaveList');
+    if (!leaveList) return;
+
+    safeHTML(
+      leaveList,
+      `<h3>Riwayat Pengajuan</h3>
+      ${
+        rows.length
+          ? rows
+              .map(
+                (r) => `
+                  <div class="list-item">
+                    <b>${r.jenis}</b>
+                    <span class="badge">${r.status}</span>
+                    <div class="muted">${r.mulai} s.d. ${r.selesai}</div>
+                    <div>${r.alasan || ''}</div>
+                  </div>
+                `
+              )
+              .join('')
+          : '<div class="muted">Belum ada pengajuan.</div>'
+      }`
+    );
+  } catch (e) {
+    safeHTML('leaveList', `<h3>Riwayat Pengajuan</h3><div>${e.message}</div>`);
+  }
+}
+
+async function submitLeave() {
+  try {
+    await api('submit_leave', {
+      jenis: $('lvJenis')?.value || '',
+      tanggalMulai: $('lvMulai')?.value || '',
+      tanggalSelesai: $('lvSelesai')?.value || '',
+      alasan: $('lvAlasan')?.value || ''
+    });
+
+    toast('Pengajuan dikirim.');
+    await showLeave();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function showAdmin() {
+  navActive('navAdmin');
+  const m = $('mainContent');
+  if (!m) return;
+
+  safeHTML(m, '<div class="card">Memuat pengaturan admin...</div>');
+
+  try {
+    const [d, locations, employees, schedules, settings] = await Promise.all([
+      api('admin_dashboard', {}),
+      api('admin_locations', {}),
+      api('admin_employees', {}),
+      api('admin_schedules', {}),
+      api('admin_settings', {})
+    ]);
+
+    const kantor = locations.find(x => x.tipe === 'KANTOR') || null;
+
+    safeHTML(m, `
+      <div class="card">
+        <h3>Dashboard Admin</h3>
+        <div class="grid2">
+          <div class="stat"><span class="muted">Pegawai</span><b>${d.totalPegawai}</b></div>
+          <div class="stat"><span class="muted">Absen Hari Ini</span><b>${d.totalTransaksiHariIni}</b></div>
+          <div class="stat"><span class="muted">Masuk</span><b>${d.masuk}</b></div>
+          <div class="stat"><span class="muted">Terlambat</span><b>${d.terlambat}</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Lokasi Kantor & Radius</h3>
+        <input id="cfgLocId" type="hidden" value="${kantor?.id || ''}">
+        <input id="cfgLocName" placeholder="Nama lokasi" value="${kantor?.nama || 'Kantor DPUPR KSB'}">
+        <textarea id="cfgLocAddress" placeholder="Alamat">${kantor?.alamat || ''}</textarea>
+        <div class="grid2">
+          <input id="cfgLat" placeholder="Latitude" inputmode="decimal" value="${kantor?.latitude ?? ''}">
+          <input id="cfgLon" placeholder="Longitude" inputmode="decimal" value="${kantor?.longitude ?? ''}">
+        </div>
+        <div class="grid2">
+          <input id="cfgRadius" placeholder="Radius meter" inputmode="numeric" value="${kantor?.radius ?? 100}">
+          <input id="cfgAccuracy" placeholder="Batas akurasi GPS (m)" inputmode="numeric" value="${kantor?.akurasi ?? 30}">
+        </div>
+        <button class="btn primary" onclick="saveOfficeLocation()">Simpan Lokasi & Radius</button>
+      </div>
+
+      <div class="card">
+        <h3>Jadwal Kerja</h3>
+        <select id="cfgScheduleSelect" onchange="loadScheduleToForm()">
+          <option value="">+ Buat jadwal baru</option>
+          ${schedules.map((x, i) => `<option value="${i}">${x.hari} • ${x.jamMasuk}-${x.jamPulang}</option>`).join('')}
+        </select>
+        <input id="cfgScheduleId" type="hidden">
+        <input id="cfgScheduleName" placeholder="Nama jadwal" value="Reguler">
+        <select id="cfgDay">
+          ${['SENIN','SELASA','RABU','KAMIS','JUMAT','SABTU','MINGGU'].map(x => `<option>${x}</option>`).join('')}
+        </select>
+        <div class="grid2">
+          <input id="cfgIn" type="time">
+          <input id="cfgOut" type="time">
+        </div>
+        <input id="cfgTolerance" type="number" min="0" placeholder="Toleransi terlambat (menit)" value="0">
+        <div class="muted" style="margin:8px 0">Jendela Absen Masuk</div>
+        <div class="grid2">
+          <input id="cfgInStart" type="time">
+          <input id="cfgInEnd" type="time">
+        </div>
+        <div class="muted" style="margin:8px 0">Jendela Absen Pulang</div>
+        <div class="grid2">
+          <input id="cfgOutStart" type="time">
+          <input id="cfgOutEnd" type="time">
+        </div>
+        <select id="cfgScheduleStatus">
+          <option value="AKTIF">AKTIF</option>
+          <option value="NONAKTIF">NONAKTIF</option>
+        </select>
+        <button class="btn primary" onclick="saveSchedule()">Simpan Jadwal</button>
+      </div>
+
+      <div class="card">
+        <h3>Buat Kegiatan</h3>
+        <input id="adNama" placeholder="Nama kegiatan">
+        <input id="adTanggal" type="date">
+        <div class="grid2">
+          <input id="adMulai" type="time">
+          <input id="adSelesai" type="time">
+        </div>
+        <select id="adLokasi">
+          ${locations.map(x => `<option value="${x.id}">${x.nama}</option>`).join('')}
+        </select>
+        <button class="btn primary" onclick="createActivity()">Aktifkan Kegiatan</button>
+      </div>
+
+      <div class="card">
+        <h3>Buat Tugas Lapangan / Dinas Luar</h3>
+        <select id="tgPegawai">
+          ${employees.map(x => `<option value="${x.idPegawai}">${x.nama}</option>`).join('')}
+        </select>
+        <select id="tgJenis">
+          <option value="TUGAS_LAPANGAN">TUGAS LAPANGAN</option>
+          <option value="DINAS_LUAR">DINAS LUAR</option>
+        </select>
+        <input id="tgNama" placeholder="Nama tugas">
+        <div class="grid2">
+          <input id="tgMulai" type="date">
+          <input id="tgSelesai" type="date">
+        </div>
+        <select id="tgMode">
+          <option value="LOKASI_AKTUAL">Lokasi Aktual</option>
+          <option value="RADIUS">Radius Lokasi</option>
+        </select>
+        <select id="tgLokasi">
+          <option value="">-- lokasi opsional --</option>
+          ${locations.map(x => `<option value="${x.id}">${x.nama}</option>`).join('')}
+        </select>
+        <button class="btn primary" onclick="createAssignment()">Simpan Penugasan</button>
+      </div>
+    `);
+
+    window.__adminSchedules = schedules;
+  } catch (e) {
+    safeHTML(m, `<div class="card">${e.message}</div>`);
+  }
+}
+
+function loadScheduleToForm() {
+  const index = $('cfgScheduleSelect')?.value;
+  if (index === '') {
+    $('cfgScheduleId').value = '';
+    $('cfgScheduleName').value = 'Reguler';
+    $('cfgTolerance').value = 0;
+    return;
+  }
+
+  const s = (window.__adminSchedules || [])[Number(index)];
+  if (!s) return;
+
+  $('cfgScheduleId').value = s.id || '';
+  $('cfgScheduleName').value = s.nama || 'Reguler';
+  $('cfgDay').value = s.hari || 'SENIN';
+  $('cfgIn').value = s.jamMasuk || '';
+  $('cfgOut').value = s.jamPulang || '';
+  $('cfgTolerance').value = s.toleransiMenit ?? 0;
+  $('cfgInStart').value = s.mulaiMasuk || '';
+  $('cfgInEnd').value = s.batasMasuk || '';
+  $('cfgOutStart').value = s.mulaiPulang || '';
+  $('cfgOutEnd').value = s.batasPulang || '';
+  $('cfgScheduleStatus').value = s.status || 'AKTIF';
+}
+
+async function saveOfficeLocation() {
+  try {
+    await api('admin_upsert_location', {
+      id: $('cfgLocId')?.value || '',
+      nama: $('cfgLocName')?.value || '',
+      alamat: $('cfgLocAddress')?.value || '',
+      latitude: $('cfgLat')?.value || '',
+      longitude: $('cfgLon')?.value || '',
+      radius: $('cfgRadius')?.value || 100,
+      akurasi: $('cfgAccuracy')?.value || 30,
+      tipe: 'KANTOR',
+      status: 'AKTIF'
+    });
+
+    toast('Lokasi kantor & radius tersimpan.');
+    await showAdmin();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function saveSchedule() {
+  try {
+    await api('admin_upsert_schedule', {
+      id: $('cfgScheduleId')?.value || '',
+      nama: $('cfgScheduleName')?.value || 'Reguler',
+      hari: $('cfgDay')?.value || '',
+      jamMasuk: $('cfgIn')?.value || '',
+      jamPulang: $('cfgOut')?.value || '',
+      toleransiMenit: $('cfgTolerance')?.value || 0,
+      mulaiMasuk: $('cfgInStart')?.value || '',
+      batasMasuk: $('cfgInEnd')?.value || '',
+      mulaiPulang: $('cfgOutStart')?.value || '',
+      batasPulang: $('cfgOutEnd')?.value || '',
+      status: $('cfgScheduleStatus')?.value || 'AKTIF'
+    });
+
+    toast('Jadwal kerja tersimpan.');
+    await showAdmin();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function createActivity() {
+  try {
+    await api('admin_create_activity', {
+      nama: $('adNama')?.value || '',
+      tanggal: $('adTanggal')?.value || '',
+      jamMulai: $('adMulai')?.value || '',
+      jamSelesai: $('adSelesai')?.value || '',
+      modeLokasi: 'RADIUS',
+      idLokasi: $('adLokasi')?.value || '',
+      wajibSelfie: true,
+      aktif: true
+    });
+
+    toast('Kegiatan aktif.');
+    await showAdmin();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function createAssignment() {
+  try {
+    await api('admin_create_assignment', {
+      idPegawai: $('tgPegawai')?.value || '',
+      jenisTugas: $('tgJenis')?.value || '',
+      namaTugas: $('tgNama')?.value || '',
+      tanggalMulai: $('tgMulai')?.value || '',
+      tanggalSelesai: $('tgSelesai')?.value || '',
+      modeLokasi: $('tgMode')?.value || 'LOKASI_AKTUAL',
+      idLokasi: $('tgLokasi')?.value || '',
+      wajibSelfie: true
+    });
+
+    toast('Penugasan disimpan.');
+    await showAdmin();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+
+function showAccount() {
+  navActive('navAccount');
+  const m = $('mainContent');
+  if (!m) return;
+
+  safeHTML(
+    m,
+    `
+    <div class="card">
+      <h3>${currentUser?.nama || '-'}</h3>
+      <div>${currentUser?.jabatan || '-'}</div>
+      <div class="muted">${currentUser?.bidang || ''}</div>
+      <div style="height:14px"></div>
+      <div class="list-item">ID/NIP: ${currentUser?.nip || currentUser?.idPegawai || '-'}</div>
+      <div class="list-item">Role: ${currentUser?.role || '-'}</div>
+    </div>
+    `
+  );
+}
+
+async function init() {
+  if (token) {
+    setView(true);
+    await afterLogin();
+  } else {
+    setView(false);
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
