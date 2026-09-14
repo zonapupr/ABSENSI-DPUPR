@@ -1,807 +1,918 @@
-window.ABS_APP_READY = '1.3.4';
-const API = '/api/gas';
-const API_TIMEOUT_MS = 25000;
-const FRONTEND_VERSION = '1.3.4';
-
-let token = localStorage.getItem('abs_token') || '';
-let currentUser = null;
-let homeData = null;
-let currentAttendance = null;
-let currentPosition = null;
-let selfieDataUrl = '';
-let cameraStream = null;
-let loginBusy = false;
-let adminGeoWatchId = null;
-let adminGeoTimeout = null;
+const APP = {
+  version: '2.0.0',
+  api: '/api/gas',
+  timeout: 30000,
+  token: localStorage.getItem('abs_token') || '',
+  user: null,
+  home: null,
+  route: 'home',
+  adminTab: 'overview',
+  cameraStream: null,
+  currentAttendance: null,
+  currentCoords: null,
+  selfieData: '',
+  busyCount: 0,
+  adminData: {
+    dashboard:null, employees:[], locations:[], schedules:[], settings:[]
+  }
+};
 
 const $ = (id) => document.getElementById(id);
+const qsa = (sel, root=document) => [...root.querySelectorAll(sel)];
+const esc = (v='') => String(v ?? '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+const roleIsAdmin = () => ['ADMIN','SUPER_ADMIN'].includes(String(APP.user?.role || '').toUpperCase());
 
-function toast(message) {
-  const t = $('toast');
-  if (!t) { console.warn(message); return; }
-  t.textContent = message;
-  t.classList.add('show');
-  clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+function toast(message, type='default', ms=2800){
+  const root = $('toastRoot');
+  if(!root) return;
+  const el = document.createElement('div');
+  el.className = `toast ${type === 'default' ? '' : type}`;
+  el.textContent = message;
+  root.appendChild(el);
+  setTimeout(() => el.remove(), ms);
 }
 
-function safeHTML(target, html) {
-  const el = typeof target === 'string' ? $(target) : target;
-  if (!el) return false;
-  el.innerHTML = html;
-  return true;
-}
-
-function safeText(target, text) {
-  const el = typeof target === 'string' ? $(target) : target;
-  if (!el) return false;
-  el.textContent = text ?? '';
-  return true;
-}
-
-function setLoginLoading(active, text) {
-  const btn = $('loginBtn');
-  const btnText = $('loginBtnText');
-  const status = $('loginStatus');
-  const statusText = $('loginStatusText');
-
-  if (btn) {
-    btn.disabled = active;
-    btn.classList.toggle('loading', active);
+function setGlobalLoading(active, text='Memproses...'){
+  const wrap = $('globalLoader');
+  if(!wrap) return;
+  if(active){
+    APP.busyCount++;
+    $('globalLoaderText').textContent = text;
+    wrap.classList.remove('hidden');
+  }else{
+    APP.busyCount = Math.max(0, APP.busyCount - 1);
+    if(APP.busyCount === 0) wrap.classList.add('hidden');
   }
-  if (btnText) btnText.textContent = active ? 'Memproses...' : 'Masuk';
-  if (status) status.classList.toggle('hidden', !active);
-  if (statusText) statusText.textContent = text || 'Menghubungkan ke server...';
 }
 
-async function api(action, payload = {}) {
+async function api(action, payload={}, options={}){
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const tid = setTimeout(() => controller.abort(), APP.timeout);
+  if(options.loading) setGlobalLoading(true, options.loading);
 
-  try {
-    const response = await fetch(API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, token, payload }),
-      signal: controller.signal
+  try{
+    const res = await fetch(APP.api, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ action, token:APP.token, payload }),
+      signal:controller.signal
     });
 
     let json;
-    try { json = await response.json(); }
-    catch (_) { throw new Error('Respons server tidak dapat dibaca.'); }
+    try{ json = await res.json(); }
+    catch{ throw new Error('Respons server tidak dapat dibaca.'); }
 
-    if (!response.ok && json?.message) throw new Error(json.message);
-    if (!json.ok) throw new Error(json.message || 'Proses gagal.');
+    if(!json.ok) throw new Error(json.message || 'Proses gagal.');
     return json.data;
-
-  } catch (e) {
-    if (e?.name === 'AbortError') throw new Error('Server terlalu lama merespons. Coba lagi.');
+  }catch(e){
+    if(e.name === 'AbortError') throw new Error('Server terlalu lama merespons.');
     throw e;
-  } finally {
-    clearTimeout(timeoutId);
+  }finally{
+    clearTimeout(tid);
+    if(options.loading) setGlobalLoading(false);
   }
 }
 
-function setView(loggedIn) {
-  $('loginView')?.classList.toggle('hidden', loggedIn);
-  $('appView')?.classList.toggle('hidden', !loggedIn);
+function hideSplash(){
+  setTimeout(() => {
+    const s = $('splash');
+    if(!s) return;
+    s.style.opacity='0';
+    setTimeout(() => s.remove(), 260);
+  }, 220);
 }
 
-async function login() {
-  if (loginBusy) return;
+function showLogin(){
+  $('loginView').classList.remove('hidden');
+  $('appView').classList.add('hidden');
+  $('loginHint').textContent = `Aplikasi siap • V${APP.version}`;
+  setTimeout(() => $('loginUser')?.focus(), 80);
+}
 
-  const username = $('username')?.value?.trim() || '';
-  const pin = $('pin')?.value?.trim() || '';
+function showApp(){
+  $('loginView').classList.add('hidden');
+  $('appView').classList.remove('hidden');
+  $('adminNav').classList.toggle('hidden', !roleIsAdmin());
+  $('headerAction').textContent = (APP.user?.nama || 'A').trim().slice(0,1).toUpperCase();
+}
 
-  if (!username || !pin) {
-    toast('Username/ID/NIP dan PIN wajib diisi.');
+function setHeader(title){
+  $('headerTitle').textContent = title;
+}
+
+function setActiveNav(route){
+  qsa('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.route === route));
+}
+
+function page(html){
+  const root = $('pageRoot');
+  root.innerHTML = html;
+  root.style.animation='none';
+  void root.offsetWidth;
+  root.style.animation='';
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function skeletonPage(){
+  return `
+    <div class="hero skeleton skel-big"></div>
+    <div class="card">
+      <div class="skeleton skel-line" style="width:42%"></div>
+      <div class="skeleton skel-line"></div>
+      <div class="skeleton skel-line" style="width:70%"></div>
+    </div>`;
+}
+
+function fmtTime(v){
+  if(!v) return '--:--';
+  const s = String(v);
+  const m = s.match(/(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2,'0')}:${m[2]}` : s.slice(0,5);
+}
+
+function fmtDate(v){
+  if(!v) return '-';
+  return String(v).slice(0,10);
+}
+
+async function login(){
+  const username = $('loginUser').value.trim();
+  const pin = $('loginPin').value.trim();
+  if(!username || !pin){
+    toast('Username/ID/NIP dan PIN wajib diisi.','warning');
     return;
   }
 
-  loginBusy = true;
-  setLoginLoading(true, 'Menghubungkan ke server...');
+  const btn = $('loginBtn');
+  const old = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span><span>Memproses...</span>`;
+  $('loginHint').textContent = 'Menghubungkan ke server...';
 
-  const slowTimer = setTimeout(() => {
-    safeText('loginStatusText', 'Masih memproses, mohon tunggu...');
-  }, 4000);
+  try{
+    const data = await api('login', {username, pin, deviceInfo:navigator.userAgent});
+    APP.token = data.token;
+    APP.user = data.user;
+    localStorage.setItem('abs_token', APP.token);
+    showApp();
+    toast('Login berhasil.','success');
+    await navigate('home');
+  }catch(e){
+    toast(e.message,'error');
+    $('loginHint').textContent = e.message;
+  }finally{
+    btn.disabled = false;
+    btn.innerHTML = old;
+  }
+}
 
-  try {
-    const data = await api('login', {
-      username,
-      pin,
-      deviceInfo: navigator.userAgent
+async function logout(){
+  try{ if(APP.token) await api('logout',{},{}); }catch(_){}
+  closeModal();
+  APP.token='';
+  APP.user=null;
+  APP.home=null;
+  localStorage.removeItem('abs_token');
+  showLogin();
+  toast('Anda sudah keluar.');
+}
+
+async function boot(){
+  hideSplash();
+
+  $('loginBtn').addEventListener('click', login);
+  $('loginPin').addEventListener('keydown', e => { if(e.key==='Enter') login(); });
+  $('togglePinBtn').addEventListener('click', () => {
+    const i = $('loginPin');
+    i.type = i.type === 'password' ? 'text' : 'password';
+  });
+
+  $('headerAction').addEventListener('click', () => navigate('account'));
+  $('bottomNav').addEventListener('click', e => {
+    const b = e.target.closest('[data-route]');
+    if(b) navigate(b.dataset.route);
+  });
+
+  document.addEventListener('pointerdown', e => {
+    const b = e.target.closest('button,.btn');
+    if(!b || b.disabled) return;
+    try{ navigator.vibrate?.(8); }catch(_){}
+  }, {passive:true});
+
+  if(!APP.token){
+    showLogin();
+    return;
+  }
+
+  try{
+    APP.user = await api('me');
+    showApp();
+    await navigate('home');
+  }catch(_){
+    APP.token='';
+    localStorage.removeItem('abs_token');
+    showLogin();
+  }
+}
+
+async function navigate(route){
+  if(route === 'admin' && !roleIsAdmin()){
+    toast('Menu ini hanya untuk Admin/Super Admin.','warning');
+    return;
+  }
+  APP.route = route;
+  setActiveNav(route);
+
+  if(route === 'home'){ setHeader('Beranda'); return renderHome(); }
+  if(route === 'history'){ setHeader('Rekap'); return renderHistory(); }
+  if(route === 'leave'){ setHeader('Izin / Cuti'); return renderLeave(); }
+  if(route === 'admin'){ setHeader('Admin'); return renderAdmin(); }
+  if(route === 'account'){ setHeader('Akun'); return renderAccount(); }
+}
+
+async function renderHome(){
+  page(skeletonPage());
+  try{
+    APP.home = await api('home');
+    const d = APP.home || {};
+    const server = d.server || {};
+    const schedule = d.schedule || null;
+    const att = d.attendance || {};
+    const acts = d.activeActivities || [];
+    const tasks = d.assignments || [];
+
+    let actions = '';
+    if(schedule){
+      if(!att.masuk){
+        actions += homeAction('MASUK','Absen Masuk','GPS + selfie','');
+      }else if(!att.pulang){
+        actions += homeAction('PULANG','Absen Pulang','GPS + selfie','');
+      }
+    }
+    acts.forEach(x => {
+      actions += homeAction('KEGIATAN',`Absen Kegiatan: ${esc(x.nama)}`,`${esc(x.jamMulai || '-')} - ${esc(x.jamSelesai || '-')}`,x.idKegiatan);
+    });
+    tasks.forEach(x => {
+      const label = x.jenisTugas === 'DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan';
+      actions += homeAction(x.jenisTugas,`${label}: ${esc(x.namaTugas)}`,x.modeLokasi === 'LOKASI_AKTUAL' ? 'Lokasi aktual' : 'Radius lokasi',x.idTugas);
     });
 
-    safeText('loginStatusText', 'Login berhasil, membuka aplikasi...');
-    token = data.token;
-    currentUser = data.user;
-    localStorage.setItem('abs_token', token);
-
-    setView(true);
-    await afterLogin();
-
-  } catch (e) {
-    console.error('login:', e);
-    toast(e.message);
-    setView(false);
-  } finally {
-    clearTimeout(slowTimer);
-    loginBusy = false;
-    setLoginLoading(false);
-  }
-}
-
-async function logout() {
-  try { if (token) await api('logout', {}); } catch (_) {}
-  stopAdminGeoWatch();
-  token = '';
-  currentUser = null;
-  homeData = null;
-  localStorage.removeItem('abs_token');
-  setView(false);
-}
-
-async function afterLogin() {
-  if (!currentUser) currentUser = await api('me', {});
-  safeText('helloName', currentUser?.nama || 'Pegawai');
-
-  const adminNav = $('navAdmin');
-  if (adminNav) {
-    adminNav.classList.toggle('hidden', !['ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role));
-  }
-
-  await showHome();
-}
-
-function navActive(id) {
-  document.querySelectorAll('.bottom-nav button').forEach((btn) => btn.classList.remove('active'));
-  $(id)?.classList.add('active');
-}
-
-function actionCard(type, title, subtitle, ref = '') {
-  const safeTitle = String(title).replace(/'/g, "\\'");
-  return `
-    <div class="action-card active">
-      <h3>${title}</h3>
-      <div class="muted">${subtitle || ''}</div>
-      <div style="height:10px"></div>
-      <button class="btn primary" onclick="openAttendance('${type}','${ref}','${safeTitle}')">
-        Mulai Absen
-      </button>
-    </div>
-  `;
-}
-
-async function showHome() {
-  stopAdminGeoWatch();
-  navActive('navHome');
-  const m = $('mainContent');
-  if (!m) return;
-
-  safeHTML(m, '<div class="card">Memuat...</div>');
-
-  try {
-    homeData = await api('home', {});
-    const s = homeData?.schedule || null;
-    const a = homeData?.attendance || {};
-    const server = homeData?.server || {};
-
-    let html = `
+    page(`
       <div class="hero">
-        <div class="small">${server.day || '-'}</div>
-        <div class="time">${(server.time || '--:--').slice(0,5)}</div>
-        <div class="date">${server.date || '-'}</div>
+        <div class="hero-day">${esc(server.day || '-')}</div>
+        <div class="hero-time">${esc(fmtTime(server.time))}</div>
+        <div class="hero-date">${esc(server.date || '-')}</div>
       </div>
-    `;
 
-    html += `
       <div class="card">
-        <h3>Jadwal Hari Ini</h3>
-        ${s ? `
+        <div class="card-title-row"><h2>Jadwal Hari Ini</h2><span class="badge info">${schedule ? 'AKTIF' : 'BELUM ADA'}</span></div>
+        ${schedule ? `
           <div class="grid2">
-            <div class="stat"><span class="muted">Masuk</span><b>${s.jamMasuk || '-'}</b></div>
-            <div class="stat"><span class="muted">Pulang</span><b>${s.jamPulang || '-'}</b></div>
-          </div>
-        ` : '<div class="muted">Belum ada jadwal aktif untuk hari ini.</div>'}
+            <div class="stat"><div class="stat-label">Masuk</div><div class="stat-value">${esc(fmtTime(schedule.jamMasuk))}</div></div>
+            <div class="stat"><div class="stat-label">Pulang</div><div class="stat-value">${esc(fmtTime(schedule.jamPulang))}</div></div>
+          </div>` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal aktif hari ini.</div>`}
       </div>
-    `;
 
-    html += `
       <div class="card">
-        <h3>Status Hari Ini</h3>
+        <div class="card-title-row"><h2>Status Hari Ini</h2></div>
         <div class="grid2">
-          <div class="stat"><span class="muted">Masuk</span><b>${a?.masuk?.waktu ? a.masuk.waktu.slice(11,16) : '--:--'}</b></div>
-          <div class="stat"><span class="muted">Pulang</span><b>${a?.pulang?.waktu ? a.pulang.waktu.slice(11,16) : '--:--'}</b></div>
+          <div class="stat"><div class="stat-label">Masuk</div><div class="stat-value">${att.masuk?.waktu ? esc(fmtTime(att.masuk.waktu)) : '--:--'}</div></div>
+          <div class="stat"><div class="stat-label">Pulang</div><div class="stat-value">${att.pulang?.waktu ? esc(fmtTime(att.pulang.waktu)) : '--:--'}</div></div>
         </div>
       </div>
-    `;
 
-    if (s) {
-      if (!a?.masuk) html += actionCard('MASUK', 'Absen Masuk', 'GPS + selfie');
-      else if (!a?.pulang) html += actionCard('PULANG', 'Absen Pulang', 'GPS + selfie');
-    }
-
-    (homeData?.activeActivities || []).forEach((x) => {
-      html += actionCard('KEGIATAN', `Absen Kegiatan: ${x.nama}`,
-        `${x.jamMulai || '-'} - ${x.jamSelesai || '-'}`, x.idKegiatan);
-    });
-
-    (homeData?.assignments || []).forEach((x) => {
-      html += actionCard(
-        x.jenisTugas,
-        `${x.jenisTugas === 'DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan'}: ${x.namaTugas}`,
-        x.modeLokasi === 'LOKASI_AKTUAL' ? 'Lokasi aktual' : 'Radius lokasi',
-        x.idTugas
-      );
-    });
-
-    safeHTML(m, html);
-  } catch (e) {
-    safeHTML(m, `<div class="card">${e.message}</div>`);
-    toast(e.message);
+      ${actions ? `<div class="card"><div class="card-title-row"><h2>Aksi Hari Ini</h2></div>${actions}</div>` : ''}
+    `);
+  }catch(e){
+    page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
   }
 }
 
-async function openAttendance(type, ref, title) {
-  currentAttendance = { type, ref, title };
-  currentPosition = null;
-  selfieDataUrl = '';
-
-  const modal = $('attendanceModal');
-  const camera = $('camera');
-  const preview = $('preview');
-  const submit = $('submitAttendBtn');
-
-  if (!modal || !camera || !preview || !submit) {
-    toast('Komponen absensi belum lengkap.');
-    return;
-  }
-
-  preview.classList.add('hidden');
-  camera.classList.remove('hidden');
-  safeText('attTitle', title || 'Absensi');
-  modal.classList.remove('hidden');
-  submit.disabled = true;
-  safeText('gpsStatus', 'Mencari lokasi...');
-  safeText('gpsInfo', '');
-
-  try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user' },
-      audio: false
-    });
-    camera.srcObject = cameraStream;
-  } catch (e) {
-    toast('Kamera tidak dapat dibuka.');
-  }
-
-  if (!navigator.geolocation) {
-    safeText('gpsStatus', 'GPS tidak didukung perangkat.');
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      currentPosition = pos.coords;
-      safeText('gpsStatus', 'GPS ditemukan');
-      safeText('gpsInfo', `Akurasi ±${Math.round(pos.coords.accuracy)} meter`);
-      updateSubmitState();
-    },
-    (err) => safeText('gpsStatus', 'GPS gagal: ' + err.message),
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-  );
+function homeAction(type,title,subtitle,ref){
+  return `
+    <div class="action-card">
+      <h3>${title}</h3>
+      <div class="muted small">${subtitle}</div>
+      <button class="btn primary" type="button" onclick="openAttendance('${esc(type)}','${esc(ref || '')}','${esc(title)}')">Mulai</button>
+    </div>`;
 }
 
-function captureSelfie() {
-  const video = $('camera');
-  const canvas = $('snapshot');
-  const preview = $('preview');
+async function renderHistory(){
+  page(skeletonPage());
+  try{
+    const rows = await api('history',{limit:100});
+    page(`
+      <div class="card">
+        <div class="card-title-row"><h2>Riwayat Absensi</h2><span class="badge">${rows.length} data</span></div>
+        ${rows.length ? `<div class="list">${rows.map(r => historyRow(r)).join('')}</div>` : empty('Belum ada riwayat absensi.')}
+      </div>`);
+  }catch(e){
+    page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
+  }
+}
 
-  if (!video || !canvas || !preview) {
-    toast('Kamera belum siap.');
-    return;
+function historyRow(r){
+  const st = String(r.status || '');
+  const cls = st.includes('TERLAMBAT') ? 'warning' : st.includes('DITOLAK') ? 'danger' : 'success';
+  return `
+    <div class="list-item">
+      <div class="list-top">
+        <div><div class="list-title">${esc(r.jenis || '-')}</div><div class="list-meta">${esc(fmtDate(r.tanggal))} • ${esc(fmtTime(r.waktu))}</div></div>
+        <span class="badge ${cls}">${esc(st || '-')}</span>
+      </div>
+    </div>`;
+}
+
+async function renderLeave(){
+  page(`
+    <div class="card">
+      <div class="card-title-row"><h2>Ajukan Izin / Sakit / Cuti</h2></div>
+      <div class="form-grid">
+        <label class="field"><span>Jenis</span>
+          <select id="leaveType"><option>IZIN</option><option>SAKIT</option><option>CUTI</option></select>
+        </label>
+        <label class="field"><span>Tanggal Mulai</span><input id="leaveStart" type="date"></label>
+        <label class="field"><span>Tanggal Selesai</span><input id="leaveEnd" type="date"></label>
+        <label class="field"><span>Alasan</span><textarea id="leaveReason" placeholder="Tulis alasan"></textarea></label>
+      </div>
+      <button id="submitLeaveBtn" class="btn primary block" type="button">Kirim Pengajuan</button>
+    </div>
+    <div id="leaveHistoryCard" class="card">${skeletonInline()}</div>
+  `);
+
+  $('submitLeaveBtn').addEventListener('click', submitLeave);
+  await loadLeaveHistory();
+}
+
+async function submitLeave(){
+  const jenis = $('leaveType').value;
+  const tanggalMulai = $('leaveStart').value;
+  const tanggalSelesai = $('leaveEnd').value;
+  const alasan = $('leaveReason').value.trim();
+  if(!tanggalMulai || !tanggalSelesai || !alasan){
+    toast('Lengkapi tanggal dan alasan.','warning'); return;
   }
 
-  if (!video.videoWidth || !video.videoHeight) {
-    toast('Tunggu kamera siap beberapa detik.');
-    return;
+  const btn = $('submitLeaveBtn');
+  await busyButton(btn, async() => {
+    await api('submit_leave',{jenis,tanggalMulai,tanggalSelesai,alasan});
+    toast('Pengajuan berhasil dikirim.','success');
+    $('leaveReason').value='';
+    await loadLeaveHistory();
+  }, 'Mengirim...');
+}
+
+async function loadLeaveHistory(){
+  const c = $('leaveHistoryCard');
+  if(!c) return;
+  try{
+    const rows = await api('my_leaves');
+    c.innerHTML = `
+      <div class="card-title-row"><h2>Riwayat Pengajuan</h2><span class="badge">${rows.length} data</span></div>
+      ${rows.length ? `<div class="list">${rows.map(r => `
+        <div class="list-item">
+          <div class="list-top">
+            <div>
+              <div class="list-title">${esc(r.jenis)}</div>
+              <div class="list-meta">${esc(r.mulai)} s.d. ${esc(r.selesai)}</div>
+            </div>
+            <span class="badge ${String(r.status).includes('DITOLAK')?'danger':String(r.status).includes('DISETUJUI')?'success':'warning'}">${esc(r.status)}</span>
+          </div>
+          <div class="list-meta">${esc(r.alasan || '')}</div>
+        </div>`).join('')}</div>` : empty('Belum ada pengajuan.')}`;
+  }catch(e){
+    c.innerHTML = `<div class="inline-note bad">${esc(e.message)}</div>`;
+  }
+}
+
+async function renderAdmin(){
+  page(skeletonPage());
+  try{
+    await loadAdminBase();
+    renderAdminShell();
+  }catch(e){
+    page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
+  }
+}
+
+async function loadAdminBase(){
+  const [dashboard, employees, locations, schedules] = await Promise.all([
+    api('admin_dashboard'),
+    api('admin_employees'),
+    api('admin_locations'),
+    api('admin_schedules')
+  ]);
+  APP.adminData.dashboard = dashboard;
+  APP.adminData.employees = employees || [];
+  APP.adminData.locations = locations || [];
+  APP.adminData.schedules = schedules || [];
+
+  try{
+    APP.adminData.settings = await api('admin_settings');
+  }catch(_){
+    APP.adminData.settings = [];
+  }
+}
+
+function renderAdminShell(){
+  page(`
+    <div class="section-tabs">
+      ${adminTabBtn('overview','Ringkasan')}
+      ${adminTabBtn('location','Lokasi & Radius')}
+      ${adminTabBtn('schedule','Jadwal')}
+      ${adminTabBtn('activity','Kegiatan')}
+      ${adminTabBtn('assignment','Penugasan')}
+      ${adminTabBtn('employees','Pegawai')}
+    </div>
+    <div id="adminPanel"></div>
+  `);
+
+  qsa('.tab-btn').forEach(b => b.addEventListener('click', () => {
+    APP.adminTab = b.dataset.tab;
+    qsa('.tab-btn').forEach(x => x.classList.toggle('active',x===b));
+    renderAdminPanel();
+  }));
+
+  renderAdminPanel();
+}
+
+function adminTabBtn(id,label){
+  return `<button class="tab-btn ${APP.adminTab===id?'active':''}" data-tab="${id}" type="button">${label}</button>`;
+}
+
+function renderAdminPanel(){
+  const p = $('adminPanel');
+  if(!p) return;
+  if(APP.adminTab==='overview') p.innerHTML = adminOverview();
+  if(APP.adminTab==='location') p.innerHTML = adminLocation();
+  if(APP.adminTab==='schedule') p.innerHTML = adminSchedule();
+  if(APP.adminTab==='activity') p.innerHTML = adminActivity();
+  if(APP.adminTab==='assignment') p.innerHTML = adminAssignment();
+  if(APP.adminTab==='employees') p.innerHTML = adminEmployees();
+  bindAdminPanel();
+}
+
+function adminOverview(){
+  const d = APP.adminData.dashboard || {};
+  return `
+    <div class="card">
+      <div class="card-title-row"><h2>Ringkasan Admin</h2><span class="badge info">${esc(d.tanggal || '')}</span></div>
+      <div class="admin-kpi">
+        <div class="stat"><div class="stat-label">Pegawai Aktif</div><div class="stat-value">${esc(d.totalPegawai ?? 0)}</div></div>
+        <div class="stat"><div class="stat-label">Transaksi Hari Ini</div><div class="stat-value">${esc(d.totalTransaksiHariIni ?? 0)}</div></div>
+        <div class="stat"><div class="stat-label">Masuk</div><div class="stat-value">${esc(d.masuk ?? 0)}</div></div>
+        <div class="stat"><div class="stat-label">Terlambat</div><div class="stat-value">${esc(d.terlambat ?? 0)}</div></div>
+      </div>
+    </div>`;
+}
+
+function adminLocation(){
+  const loc = APP.adminData.locations.find(x => String(x.tipe).toUpperCase()==='KANTOR') || {};
+  return `
+    <div class="card">
+      <div class="card-title-row"><h2>Lokasi Kantor & Radius</h2><span class="badge info">Admin</span></div>
+      <input id="locId" type="hidden" value="${esc(loc.id || '')}">
+      <label class="field"><span>Nama Lokasi</span><input id="locName" value="${esc(loc.nama || 'Kantor DPUPR KSB')}"></label>
+      <label class="field"><span>Alamat</span><textarea id="locAddress">${esc(loc.alamat || '')}</textarea></label>
+
+      <button id="getLocationBtn" class="btn yellow block location-btn" type="button">📍 Ambil Lokasi Saya Sekarang</button>
+      <div id="locationStatus" class="inline-note">${loc.latitude ? `Titik tersimpan: ${esc(loc.latitude)}, ${esc(loc.longitude)}` : 'Belum ada titik lokasi tersimpan.'}</div>
+
+      <div class="form-grid">
+        <label class="field"><span>Latitude</span><input id="locLat" inputmode="decimal" value="${esc(loc.latitude ?? '')}"></label>
+        <label class="field"><span>Longitude</span><input id="locLon" inputmode="decimal" value="${esc(loc.longitude ?? '')}"></label>
+        <label class="field"><span>Radius (meter)</span><input id="locRadius" type="number" min="1" value="${esc(loc.radius ?? 100)}"></label>
+        <label class="field"><span>Batas Akurasi GPS (meter)</span><input id="locAccuracy" type="number" min="1" value="${esc(loc.akurasi ?? 30)}"></label>
+      </div>
+
+      <button id="saveLocationBtn" class="btn primary block" type="button">Simpan Lokasi & Radius</button>
+    </div>`;
+}
+
+function adminSchedule(){
+  const options = APP.adminData.schedules.map((s,i)=>`<option value="${i}">${esc(s.hari)} • ${esc(fmtTime(s.jamMasuk))}-${esc(fmtTime(s.jamPulang))}</option>`).join('');
+  return `
+    <div class="card">
+      <div class="card-title-row"><h2>Jadwal Kerja</h2><span class="badge">${APP.adminData.schedules.length} jadwal</span></div>
+      <label class="field"><span>Pilih Jadwal</span><select id="schedulePicker"><option value="">+ Buat baru</option>${options}</select></label>
+      <input id="schId" type="hidden">
+      <div class="form-grid">
+        <label class="field"><span>Nama Jadwal</span><input id="schName" value="Reguler"></label>
+        <label class="field"><span>Hari</span>
+          <select id="schDay">${['SENIN','SELASA','RABU','KAMIS','JUMAT','SABTU','MINGGU'].map(x=>`<option>${x}</option>`).join('')}</select>
+        </label>
+        <label class="field"><span>Jam Masuk</span><input id="schIn" type="time"></label>
+        <label class="field"><span>Jam Pulang</span><input id="schOut" type="time"></label>
+        <label class="field"><span>Toleransi Terlambat (menit)</span><input id="schTolerance" type="number" min="0" value="0"></label>
+        <label class="field"><span>Status</span><select id="schStatus"><option>AKTIF</option><option>NONAKTIF</option></select></label>
+        <label class="field"><span>Mulai Absen Masuk</span><input id="schInStart" type="time"></label>
+        <label class="field"><span>Batas Absen Masuk</span><input id="schInEnd" type="time"></label>
+        <label class="field"><span>Mulai Absen Pulang</span><input id="schOutStart" type="time"></label>
+        <label class="field"><span>Batas Absen Pulang</span><input id="schOutEnd" type="time"></label>
+      </div>
+      <button id="saveScheduleBtn" class="btn primary block" type="button">Simpan Jadwal</button>
+    </div>`;
+}
+
+function adminActivity(){
+  const locOptions = APP.adminData.locations.map(x => `<option value="${esc(x.id)}">${esc(x.nama)}</option>`).join('');
+  return `
+    <div class="card">
+      <div class="card-title-row"><h2>Buat Kegiatan</h2><span class="badge info">Dinamis</span></div>
+      <label class="field"><span>Nama Kegiatan</span><input id="actName" placeholder="Contoh: Apel malam"></label>
+      <div class="form-grid">
+        <label class="field"><span>Tanggal</span><input id="actDate" type="date"></label>
+        <label class="field"><span>Lokasi</span><select id="actLocation">${locOptions}</select></label>
+        <label class="field"><span>Jam Mulai</span><input id="actStart" type="time"></label>
+        <label class="field"><span>Jam Selesai</span><input id="actEnd" type="time"></label>
+      </div>
+      <button id="saveActivityBtn" class="btn primary block" type="button">Aktifkan Kegiatan</button>
+    </div>`;
+}
+
+function adminAssignment(){
+  const emps = APP.adminData.employees.map(x => `<option value="${esc(x.idPegawai)}">${esc(x.nama)}</option>`).join('');
+  const locs = APP.adminData.locations.map(x => `<option value="${esc(x.id)}">${esc(x.nama)}</option>`).join('');
+  return `
+    <div class="card">
+      <div class="card-title-row"><h2>Penugasan</h2><span class="badge info">Admin</span></div>
+      <label class="field"><span>Pegawai</span><select id="taskEmployee">${emps}</select></label>
+      <div class="form-grid">
+        <label class="field"><span>Jenis</span><select id="taskType"><option value="TUGAS_LAPANGAN">TUGAS LAPANGAN</option><option value="DINAS_LUAR">DINAS LUAR</option></select></label>
+        <label class="field"><span>Mode Lokasi</span><select id="taskMode"><option value="LOKASI_AKTUAL">LOKASI AKTUAL</option><option value="RADIUS">RADIUS</option></select></label>
+      </div>
+      <label class="field"><span>Nama Tugas</span><input id="taskName"></label>
+      <div class="form-grid">
+        <label class="field"><span>Tanggal Mulai</span><input id="taskStart" type="date"></label>
+        <label class="field"><span>Tanggal Selesai</span><input id="taskEnd" type="date"></label>
+      </div>
+      <label class="field"><span>Lokasi (opsional jika Lokasi Aktual)</span><select id="taskLocation"><option value="">-- pilih --</option>${locs}</select></label>
+      <button id="saveAssignmentBtn" class="btn primary block" type="button">Simpan Penugasan</button>
+    </div>`;
+}
+
+function adminEmployees(){
+  const rows = APP.adminData.employees || [];
+  return `
+    <div class="card">
+      <div class="card-title-row"><h2>Pegawai</h2><span class="badge">${rows.length} orang</span></div>
+      <div class="list">
+        ${rows.map(x => `
+          <div class="list-item">
+            <div class="list-top">
+              <div>
+                <div class="list-title">${esc(x.nama)}</div>
+                <div class="list-meta">${esc(x.jabatan || '-')} • ${esc(x.bidang || '-')}</div>
+                <div class="list-meta">ID/NIP: ${esc(x.nip || x.idPegawai)}</div>
+              </div>
+              <span class="badge info">${esc(x.role)}</span>
+            </div>
+            <button class="btn ghost block" type="button" data-reset-pin="${esc(x.idPegawai)}" data-name="${esc(x.nama)}" style="margin-top:10px">Reset PIN</button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function bindAdminPanel(){
+  if(APP.adminTab==='location'){
+    $('getLocationBtn')?.addEventListener('click', getAdminLocation);
+    $('saveLocationBtn')?.addEventListener('click', saveAdminLocation);
+  }
+  if(APP.adminTab==='schedule'){
+    $('schedulePicker')?.addEventListener('change', loadScheduleForm);
+    $('saveScheduleBtn')?.addEventListener('click', saveSchedule);
+  }
+  if(APP.adminTab==='activity'){
+    $('saveActivityBtn')?.addEventListener('click', saveActivity);
+  }
+  if(APP.adminTab==='assignment'){
+    $('saveAssignmentBtn')?.addEventListener('click', saveAssignment);
+  }
+  if(APP.adminTab==='employees'){
+    qsa('[data-reset-pin]').forEach(b => b.addEventListener('click', () => openPinReset(b.dataset.resetPin,b.dataset.name)));
+  }
+}
+
+async function getAdminLocation(){
+  const btn = $('getLocationBtn');
+  if(!navigator.geolocation){
+    toast('GPS tidak didukung perangkat ini.','error'); return;
+  }
+  btn.disabled=true;
+  btn.innerHTML='<span class="spinner dark"></span>Mencari lokasi...';
+  const status = $('locationStatus');
+  status.className='inline-note';
+  status.textContent='Mencari titik GPS terbaik...';
+
+  let best=null, watch=null, timer=null;
+  try{
+    await new Promise((resolve,reject)=>{
+      const target = Math.max(5, Number($('locAccuracy').value || 30));
+      watch = navigator.geolocation.watchPosition(pos=>{
+        if(!best || pos.coords.accuracy < best.coords.accuracy){
+          best=pos;
+          $('locLat').value=Number(pos.coords.latitude).toFixed(7);
+          $('locLon').value=Number(pos.coords.longitude).toFixed(7);
+          status.textContent=`Lokasi ditemukan • akurasi ±${Math.round(pos.coords.accuracy)} meter`;
+        }
+        if(pos.coords.accuracy <= target) resolve();
+      }, reject, {enableHighAccuracy:true,maximumAge:0,timeout:12000});
+      timer=setTimeout(()=> best ? resolve() : reject(new Error('GPS belum menemukan lokasi.')),15000);
+    });
+    status.className='inline-note good';
+    status.textContent=`Lokasi siap • akurasi terbaik ±${Math.round(best.coords.accuracy)} meter`;
+    toast('Lokasi berhasil diambil.','success');
+  }catch(e){
+    status.className='inline-note bad';
+    status.textContent=e.message || 'Lokasi tidak dapat diambil.';
+    toast(status.textContent,'error');
+  }finally{
+    if(watch!==null) navigator.geolocation.clearWatch(watch);
+    if(timer) clearTimeout(timer);
+    btn.disabled=false;
+    btn.textContent='📍 Ambil Lokasi Saya Sekarang';
+  }
+}
+
+async function saveAdminLocation(){
+  const payload = {
+    id:$('locId').value,
+    nama:$('locName').value.trim(),
+    alamat:$('locAddress').value.trim(),
+    latitude:$('locLat').value,
+    longitude:$('locLon').value,
+    radius:$('locRadius').value,
+    akurasi:$('locAccuracy').value,
+    tipe:'KANTOR',
+    status:'AKTIF'
+  };
+  if(!payload.nama || !payload.latitude || !payload.longitude || Number(payload.latitude)===0 || Number(payload.longitude)===0){
+    toast('Nama dan titik lokasi wajib diisi.','warning'); return;
   }
 
-  canvas.width = 720;
-  canvas.height = Math.round((720 * video.videoHeight) / video.videoWidth);
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  const btn=$('saveLocationBtn');
+  await busyButton(btn, async()=>{
+    await api('admin_upsert_location',payload);
+    toast('Lokasi & radius tersimpan.','success');
+    await loadAdminBase();
+    renderAdminPanel();
+  },'Menyimpan...');
+}
 
-  selfieDataUrl = canvas.toDataURL('image/jpeg', 0.72);
-  preview.src = selfieDataUrl;
+function loadScheduleForm(){
+  const v=$('schedulePicker').value;
+  if(v===''){
+    $('schId').value=''; $('schName').value='Reguler'; $('schTolerance').value='0'; return;
+  }
+  const s=APP.adminData.schedules[Number(v)];
+  if(!s) return;
+  $('schId').value=s.id||'';
+  $('schName').value=s.nama||'Reguler';
+  $('schDay').value=s.hari||'SENIN';
+  $('schIn').value=fmtTime(s.jamMasuk);
+  $('schOut').value=fmtTime(s.jamPulang);
+  $('schTolerance').value=s.toleransiMenit??0;
+  $('schInStart').value=fmtTime(s.mulaiMasuk);
+  $('schInEnd').value=fmtTime(s.batasMasuk);
+  $('schOutStart').value=fmtTime(s.mulaiPulang);
+  $('schOutEnd').value=fmtTime(s.batasPulang);
+  $('schStatus').value=s.status||'AKTIF';
+}
+
+async function saveSchedule(){
+  const payload={
+    id:$('schId').value,nama:$('schName').value.trim(),hari:$('schDay').value,
+    jamMasuk:$('schIn').value,jamPulang:$('schOut').value,toleransiMenit:$('schTolerance').value,
+    mulaiMasuk:$('schInStart').value,batasMasuk:$('schInEnd').value,
+    mulaiPulang:$('schOutStart').value,batasPulang:$('schOutEnd').value,status:$('schStatus').value
+  };
+  if(!payload.hari || !payload.jamMasuk || !payload.jamPulang){
+    toast('Hari, jam masuk dan jam pulang wajib diisi.','warning'); return;
+  }
+  const btn=$('saveScheduleBtn');
+  await busyButton(btn, async()=>{
+    await api('admin_upsert_schedule',payload);
+    toast('Jadwal tersimpan.','success');
+    await loadAdminBase();
+    renderAdminPanel();
+  },'Menyimpan...');
+}
+
+async function saveActivity(){
+  const payload={
+    nama:$('actName').value.trim(),tanggal:$('actDate').value,
+    jamMulai:$('actStart').value,jamSelesai:$('actEnd').value,
+    modeLokasi:'RADIUS',idLokasi:$('actLocation').value,wajibSelfie:true,aktif:true
+  };
+  if(!payload.nama || !payload.tanggal || !payload.jamMulai || !payload.jamSelesai){
+    toast('Lengkapi data kegiatan.','warning'); return;
+  }
+  const btn=$('saveActivityBtn');
+  await busyButton(btn, async()=>{
+    await api('admin_create_activity',payload);
+    toast('Kegiatan berhasil diaktifkan.','success');
+    $('actName').value='';
+  },'Menyimpan...');
+}
+
+async function saveAssignment(){
+  const payload={
+    idPegawai:$('taskEmployee').value,jenisTugas:$('taskType').value,
+    namaTugas:$('taskName').value.trim(),tanggalMulai:$('taskStart').value,tanggalSelesai:$('taskEnd').value,
+    modeLokasi:$('taskMode').value,idLokasi:$('taskLocation').value,wajibSelfie:true
+  };
+  if(!payload.idPegawai || !payload.namaTugas || !payload.tanggalMulai || !payload.tanggalSelesai){
+    toast('Lengkapi data penugasan.','warning'); return;
+  }
+  const btn=$('saveAssignmentBtn');
+  await busyButton(btn, async()=>{
+    await api('admin_create_assignment',payload);
+    toast('Penugasan berhasil disimpan.','success');
+    $('taskName').value='';
+  },'Menyimpan...');
+}
+
+function openPinReset(id,name){
+  openModal(`
+    <div class="modal-head"><h2>Reset PIN</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="inline-note">Pegawai: <b>${esc(name)}</b></div>
+    <label class="field"><span>PIN Baru</span><input id="newPin" type="text" inputmode="numeric" placeholder="Masukkan PIN baru"></label>
+    <button id="confirmPinBtn" class="btn primary block" type="button">Simpan PIN</button>
+  `);
+  $('confirmPinBtn').addEventListener('click', async()=>{
+    const pin=$('newPin').value.trim();
+    if(!pin){toast('PIN baru wajib diisi.','warning');return;}
+    await busyButton($('confirmPinBtn'), async()=>{
+      await api('admin_reset_pin',{idPegawai:id,pin});
+      toast('PIN berhasil diubah.','success');
+      closeModal();
+    },'Menyimpan...');
+  });
+}
+
+function renderAccount(){
+  const u=APP.user||{};
+  page(`
+    <div class="card">
+      <div class="profile-head">
+        <div class="profile-avatar">${esc((u.nama||'A').slice(0,1).toUpperCase())}</div>
+        <div><div class="profile-name">${esc(u.nama||'-')}</div><div class="muted">${esc(u.jabatan||'-')}</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="list">
+        <div class="list-item"><div class="list-title">ID / NIP</div><div class="list-meta">${esc(u.nip || u.idPegawai || '-')}</div></div>
+        <div class="list-item"><div class="list-title">Bidang</div><div class="list-meta">${esc(u.bidang || '-')}</div></div>
+        <div class="list-item"><div class="list-title">Role</div><div class="list-meta">${esc(u.role || '-')}</div></div>
+      </div>
+      <button id="logoutBtn" class="btn danger block" style="margin-top:14px" type="button">Keluar dari Aplikasi</button>
+    </div>`);
+  $('logoutBtn').addEventListener('click', logout);
+}
+
+function openModal(html){
+  const root=$('modalRoot');
+  root.innerHTML=`<div class="modal-panel">${html}</div>`;
+  root.classList.remove('hidden');
+}
+
+function closeModal(){
+  stopCamera();
+  const root=$('modalRoot');
+  root.classList.add('hidden');
+  root.innerHTML='';
+}
+
+async function openAttendance(type,ref,title){
+  APP.currentAttendance={type,ref,title};
+  APP.currentCoords=null;
+  APP.selfieData='';
+
+  openModal(`
+    <div class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+
+    <div class="gps-panel">
+      <div class="gps-box"><b>GPS</b><span id="attGpsStatus">Mencari...</span></div>
+      <div class="gps-box"><b>Akurasi</b><span id="attGpsAccuracy">-</span></div>
+    </div>
+
+    <div class="camera-wrap">
+      <video id="attVideo" autoplay playsinline muted></video>
+      <canvas id="attCanvas"></canvas>
+      <img id="attPreview" class="hidden" alt="Selfie">
+    </div>
+
+    <div class="form-actions">
+      <button id="captureBtn" class="btn secondary" type="button">Ambil Selfie</button>
+      <button id="submitAttendBtn" class="btn primary" type="button" disabled>Simpan Absen</button>
+    </div>
+  `);
+
+  $('captureBtn').addEventListener('click', captureSelfie);
+  $('submitAttendBtn').addEventListener('click', submitAttendance);
+
+  await Promise.allSettled([startCamera(), getAttendanceLocation()]);
+}
+
+async function startCamera(){
+  try{
+    APP.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+    $('attVideo').srcObject=APP.cameraStream;
+  }catch(e){
+    toast('Kamera tidak dapat dibuka. Periksa izin kamera.','error');
+  }
+}
+
+function stopCamera(){
+  if(APP.cameraStream){
+    APP.cameraStream.getTracks().forEach(t=>t.stop());
+    APP.cameraStream=null;
+  }
+}
+
+async function getAttendanceLocation(){
+  if(!navigator.geolocation){
+    $('attGpsStatus').textContent='Tidak didukung'; return;
+  }
+  try{
+    const pos=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{
+      enableHighAccuracy:true,maximumAge:0,timeout:15000
+    }));
+    APP.currentCoords=pos.coords;
+    $('attGpsStatus').textContent='Ditemukan';
+    $('attGpsAccuracy').textContent=`±${Math.round(pos.coords.accuracy)} m`;
+    updateAttendReady();
+  }catch(e){
+    $('attGpsStatus').textContent='Gagal';
+    $('attGpsAccuracy').textContent='-';
+    toast('GPS tidak dapat dibaca.','error');
+  }
+}
+
+function captureSelfie(){
+  const video=$('attVideo'), canvas=$('attCanvas'), preview=$('attPreview');
+  if(!video?.videoWidth){toast('Tunggu kamera siap.','warning');return;}
+  canvas.width=720;
+  canvas.height=Math.round(720*video.videoHeight/video.videoWidth);
+  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+  APP.selfieData=canvas.toDataURL('image/jpeg',.72);
+  preview.src=APP.selfieData;
   preview.classList.remove('hidden');
   video.classList.add('hidden');
-  updateSubmitState();
+  $('captureBtn').textContent='Ulangi Selfie';
+  updateAttendReady();
 }
 
-function updateSubmitState() {
-  const submit = $('submitAttendBtn');
-  if (submit) submit.disabled = !(currentPosition && selfieDataUrl);
+function updateAttendReady(){
+  const btn=$('submitAttendBtn');
+  if(btn) btn.disabled=!(APP.currentCoords && APP.selfieData);
 }
 
-async function submitAttendance() {
-  const btn = $('submitAttendBtn');
-  if (!btn || !currentAttendance || !currentPosition) return;
+async function submitAttendance(){
+  const c=APP.currentCoords;
+  if(!c || !APP.selfieData){toast('GPS dan selfie wajib siap.','warning');return;}
+  const btn=$('submitAttendBtn');
 
-  btn.disabled = true;
-  btn.textContent = 'Menyimpan...';
-
-  try {
-    const data = await api('attend', {
-      jenisAbsen: currentAttendance.type,
-      idReferensi: currentAttendance.ref,
-      latitude: currentPosition.latitude,
-      longitude: currentPosition.longitude,
-      accuracy: currentPosition.accuracy,
-      selfieDataUrl,
-      deviceTime: new Date().toISOString(),
-      userAgent: navigator.userAgent
+  await busyButton(btn, async()=>{
+    const data=await api('attend',{
+      jenisAbsen:APP.currentAttendance.type,
+      idReferensi:APP.currentAttendance.ref,
+      latitude:c.latitude,longitude:c.longitude,accuracy:c.accuracy,
+      selfieDataUrl:APP.selfieData,
+      deviceTime:new Date().toISOString(),userAgent:navigator.userAgent
     });
-
-    toast(`Berhasil: ${data.status}`);
-    closeAttendance();
-    await showHome();
-  } catch (e) {
-    toast(e.message);
-    btn.disabled = false;
-  } finally {
-    btn.textContent = 'Simpan Absen';
-  }
+    toast(`Absensi berhasil${data?.status ? ': '+data.status : ''}.`,'success');
+    closeModal();
+    await renderHome();
+  },'Menyimpan...');
 }
 
-function closeAttendance() {
-  $('attendanceModal')?.classList.add('hidden');
-  if (cameraStream) {
-    cameraStream.getTracks().forEach((t) => t.stop());
-    cameraStream = null;
-  }
-}
-
-async function showHistory() {
-  stopAdminGeoWatch();
-  navActive('navHistory');
-  const m = $('mainContent');
-  if (!m) return;
-  safeHTML(m, '<div class="card">Memuat...</div>');
-
-  try {
-    const rows = await api('history', { limit: 50 });
-    safeHTML(m, `<div class="card"><h3>Riwayat Absensi</h3>${
-      rows.length ? rows.map((r) => `
-        <div class="list-item">
-          <b>${r.jenis}</b>
-          <span class="badge ${r.status === 'TERLAMBAT' ? 'warn' : 'ok'}">${r.status}</span>
-          <div class="muted">${r.tanggal} • ${(r.waktu || '').slice(11,16)}</div>
-        </div>`).join('') : '<div class="muted">Belum ada data.</div>'
-    }</div>`);
-  } catch (e) {
-    safeHTML(m, `<div class="card">${e.message}</div>`);
-  }
-}
-
-async function showLeave() {
-  stopAdminGeoWatch();
-  navActive('navLeave');
-  const m = $('mainContent');
-  if (!m) return;
-
-  safeHTML(m, `
-    <div class="card">
-      <h3>Pengajuan Izin / Sakit / Cuti</h3>
-      <select id="lvJenis"><option>IZIN</option><option>SAKIT</option><option>CUTI</option></select>
-      <input id="lvMulai" type="date">
-      <input id="lvSelesai" type="date">
-      <textarea id="lvAlasan" placeholder="Alasan"></textarea>
-      <button class="btn primary" onclick="submitLeave()">Kirim Pengajuan</button>
-    </div>
-    <div id="leaveList" class="card"><h3>Riwayat Pengajuan</h3><div class="muted">Memuat...</div></div>
-  `);
-
-  try {
-    const rows = await api('my_leaves', {});
-    safeHTML('leaveList', `<h3>Riwayat Pengajuan</h3>${
-      rows.length ? rows.map((r) => `
-        <div class="list-item">
-          <b>${r.jenis}</b> <span class="badge">${r.status}</span>
-          <div class="muted">${r.mulai} s.d. ${r.selesai}</div>
-          <div>${r.alasan || ''}</div>
-        </div>`).join('') : '<div class="muted">Belum ada pengajuan.</div>'
-    }`);
-  } catch (e) {
-    safeHTML('leaveList', `<h3>Riwayat Pengajuan</h3><div>${e.message}</div>`);
-  }
-}
-
-async function submitLeave() {
-  try {
-    await api('submit_leave', {
-      jenis: $('lvJenis')?.value || '',
-      tanggalMulai: $('lvMulai')?.value || '',
-      tanggalSelesai: $('lvSelesai')?.value || '',
-      alasan: $('lvAlasan')?.value || ''
-    });
-    toast('Pengajuan dikirim.');
-    await showLeave();
-  } catch (e) { toast(e.message); }
-}
-
-async function showAdmin() {
-  stopAdminGeoWatch();
-  navActive('navAdmin');
-
-  const m = $('mainContent');
-  if (!m) return;
-
-  safeHTML(m, '<div class="card">Memuat pengaturan admin...</div>');
-
-  try {
-    const [d, locations, employees, schedules] = await Promise.all([
-      api('admin_dashboard', {}),
-      api('admin_locations', {}),
-      api('admin_employees', {}),
-      api('admin_schedules', {})
-    ]);
-
-    const kantor = locations.find((x) => x.tipe === 'KANTOR') || null;
-    window.__adminSchedules = schedules || [];
-
-    safeHTML(m, `
-      <div class="card">
-        <h3>Dashboard Admin</h3>
-        <div class="grid2">
-          <div class="stat"><span class="muted">Pegawai</span><b>${d.totalPegawai}</b></div>
-          <div class="stat"><span class="muted">Absen Hari Ini</span><b>${d.totalTransaksiHariIni}</b></div>
-          <div class="stat"><span class="muted">Masuk</span><b>${d.masuk}</b></div>
-          <div class="stat"><span class="muted">Terlambat</span><b>${d.terlambat}</b></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-          <h3 style="margin:0">Lokasi Kantor & Radius</h3>
-          <span style="font-size:11px;background:#eef5ff;padding:5px 8px;border-radius:10px">v${FRONTEND_VERSION}</span>
-        </div>
-
-        <div style="height:16px"></div>
-        <input id="cfgLocId" type="hidden" value="${kantor?.id || ''}">
-        <input id="cfgLocName" placeholder="Nama lokasi" value="${kantor?.nama || 'Kantor DPUPR KSB'}">
-        <textarea id="cfgLocAddress" placeholder="Alamat">${kantor?.alamat || ''}</textarea>
-
-        <button
-          id="cfgGetLocationBtn"
-          type="button"
-          onclick="getAdminCurrentLocation()"
-          style="width:100%;margin:12px 0;padding:16px;border:0;border-radius:14px;background:#FFD600;color:#12375b;font-size:16px;font-weight:800">
-          📍 Ambil Lokasi Saya Sekarang
-        </button>
-
-        <div id="cfgGeoStatus" style="margin:0 0 14px;color:#607089;font-size:14px">
-          Tekan tombol kuning saat berada di titik kantor.
-        </div>
-
-        <div class="grid2">
-          <input id="cfgLat" placeholder="Latitude" inputmode="decimal" value="${kantor?.latitude ?? ''}">
-          <input id="cfgLon" placeholder="Longitude" inputmode="decimal" value="${kantor?.longitude ?? ''}">
-        </div>
-        <div class="grid2">
-          <input id="cfgRadius" placeholder="Radius meter" inputmode="numeric" value="${kantor?.radius ?? 100}">
-          <input id="cfgAccuracy" placeholder="Batas akurasi GPS (m)" inputmode="numeric" value="${kantor?.akurasi ?? 30}">
-        </div>
-
-        <button class="btn primary" onclick="saveOfficeLocation()">Simpan Lokasi & Radius</button>
-      </div>
-
-      <div class="card">
-        <h3>Jadwal Kerja</h3>
-        <select id="cfgScheduleSelect" onchange="loadScheduleToForm()">
-          <option value="">+ Buat jadwal baru</option>
-          ${(schedules || []).map((x, i) => `<option value="${i}">${x.hari} • ${x.jamMasuk}-${x.jamPulang}</option>`).join('')}
-        </select>
-        <input id="cfgScheduleId" type="hidden">
-        <input id="cfgScheduleName" placeholder="Nama jadwal" value="Reguler">
-        <select id="cfgDay">
-          ${['SENIN','SELASA','RABU','KAMIS','JUMAT','SABTU','MINGGU'].map(x => `<option>${x}</option>`).join('')}
-        </select>
-        <div class="grid2">
-          <input id="cfgIn" type="time">
-          <input id="cfgOut" type="time">
-        </div>
-        <input id="cfgTolerance" type="number" min="0" placeholder="Toleransi terlambat (menit)" value="0">
-        <div class="muted" style="margin:8px 0">Jendela Absen Masuk</div>
-        <div class="grid2">
-          <input id="cfgInStart" type="time">
-          <input id="cfgInEnd" type="time">
-        </div>
-        <div class="muted" style="margin:8px 0">Jendela Absen Pulang</div>
-        <div class="grid2">
-          <input id="cfgOutStart" type="time">
-          <input id="cfgOutEnd" type="time">
-        </div>
-        <select id="cfgScheduleStatus">
-          <option value="AKTIF">AKTIF</option>
-          <option value="NONAKTIF">NONAKTIF</option>
-        </select>
-        <button class="btn primary" onclick="saveSchedule()">Simpan Jadwal</button>
-      </div>
-
-      <div class="card">
-        <h3>Buat Kegiatan</h3>
-        <input id="adNama" placeholder="Nama kegiatan">
-        <input id="adTanggal" type="date">
-        <div class="grid2"><input id="adMulai" type="time"><input id="adSelesai" type="time"></div>
-        <select id="adLokasi">
-          ${(locations || []).map(x => `<option value="${x.id}">${x.nama}</option>`).join('')}
-        </select>
-        <button class="btn primary" onclick="createActivity()">Aktifkan Kegiatan</button>
-      </div>
-
-      <div class="card">
-        <h3>Buat Tugas Lapangan / Dinas Luar</h3>
-        <select id="tgPegawai">
-          ${(employees || []).map(x => `<option value="${x.idPegawai}">${x.nama}</option>`).join('')}
-        </select>
-        <select id="tgJenis">
-          <option value="TUGAS_LAPANGAN">TUGAS LAPANGAN</option>
-          <option value="DINAS_LUAR">DINAS LUAR</option>
-        </select>
-        <input id="tgNama" placeholder="Nama tugas">
-        <div class="grid2"><input id="tgMulai" type="date"><input id="tgSelesai" type="date"></div>
-        <select id="tgMode">
-          <option value="LOKASI_AKTUAL">Lokasi Aktual</option>
-          <option value="RADIUS">Radius Lokasi</option>
-        </select>
-        <select id="tgLokasi">
-          <option value="">-- lokasi opsional --</option>
-          ${(locations || []).map(x => `<option value="${x.id}">${x.nama}</option>`).join('')}
-        </select>
-        <button class="btn primary" onclick="createAssignment()">Simpan Penugasan</button>
-      </div>
-    `);
-
-  } catch (e) {
-    safeHTML(m, `<div class="card">${e.message}</div>`);
-    toast(e.message);
-  }
-}
-
-function stopAdminGeoWatch() {
-  if (adminGeoWatchId !== null && navigator.geolocation) {
-    navigator.geolocation.clearWatch(adminGeoWatchId);
-  }
-  adminGeoWatchId = null;
-  if (adminGeoTimeout) clearTimeout(adminGeoTimeout);
-  adminGeoTimeout = null;
-}
-
-function resetAdminGeoButton() {
-  const btn = $('cfgGetLocationBtn');
-  if (!btn) return;
-  btn.disabled = false;
-  btn.textContent = '📍 Ambil Lokasi Saya Sekarang';
-}
-
-function getAdminCurrentLocation() {
-  if (!navigator.geolocation) {
-    toast('GPS tidak didukung perangkat ini.');
-    return;
-  }
-
-  stopAdminGeoWatch();
-
-  const btn = $('cfgGetLocationBtn');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '⏳ Mencari lokasi...';
-  }
-
-  safeText('cfgGeoStatus', 'Mengaktifkan GPS dan mencari titik terbaik...');
-
-  let best = null;
-  const targetAccuracy = Math.max(5, Number($('cfgAccuracy')?.value || 30));
-
-  const acceptPosition = (pos) => {
-    if (!best || pos.coords.accuracy < best.coords.accuracy) {
-      best = pos;
-
-      if ($('cfgLat')) $('cfgLat').value = Number(pos.coords.latitude).toFixed(7);
-      if ($('cfgLon')) $('cfgLon').value = Number(pos.coords.longitude).toFixed(7);
-
-      safeText('cfgGeoStatus',
-        `Lokasi ditemukan • akurasi ±${Math.round(pos.coords.accuracy)} meter`);
+async function busyButton(btn, fn, label='Memproses...'){
+  if(!btn || btn.disabled) return;
+  const old=btn.innerHTML;
+  btn.disabled=true;
+  btn.innerHTML=`<span class="spinner"></span><span>${esc(label)}</span>`;
+  try{
+    await fn();
+  }catch(e){
+    toast(e.message,'error');
+  }finally{
+    if(document.body.contains(btn)){
+      btn.disabled=false;
+      btn.innerHTML=old;
     }
-
-    if (pos.coords.accuracy <= targetAccuracy) {
-      stopAdminGeoWatch();
-      resetAdminGeoButton();
-      toast(`Lokasi berhasil diambil. Akurasi ±${Math.round(pos.coords.accuracy)} m`);
-    }
-  };
-
-  const failPosition = (err) => {
-    stopAdminGeoWatch();
-    resetAdminGeoButton();
-
-    let msg = 'Lokasi tidak dapat diambil.';
-    if (err.code === 1) msg = 'Izin lokasi ditolak. Izinkan akses lokasi pada browser.';
-    if (err.code === 2) msg = 'Sinyal GPS belum tersedia. Coba di area lebih terbuka.';
-    if (err.code === 3) msg = 'Pencarian lokasi terlalu lama. Coba lagi.';
-
-    safeText('cfgGeoStatus', msg);
-    toast(msg);
-  };
-
-  adminGeoWatchId = navigator.geolocation.watchPosition(
-    acceptPosition,
-    failPosition,
-    { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
-  );
-
-  adminGeoTimeout = setTimeout(() => {
-    stopAdminGeoWatch();
-    resetAdminGeoButton();
-
-    if (best) {
-      safeText('cfgGeoStatus',
-        `Lokasi digunakan • akurasi terbaik ±${Math.round(best.coords.accuracy)} meter`);
-      toast('Lokasi terbaik sudah diambil.');
-    } else {
-      safeText('cfgGeoStatus', 'GPS belum menemukan lokasi. Coba lagi.');
-      toast('GPS belum menemukan lokasi.');
-    }
-  }, 15000);
-}
-
-function loadScheduleToForm() {
-  const index = $('cfgScheduleSelect')?.value;
-
-  if (index === '') {
-    if ($('cfgScheduleId')) $('cfgScheduleId').value = '';
-    if ($('cfgScheduleName')) $('cfgScheduleName').value = 'Reguler';
-    if ($('cfgTolerance')) $('cfgTolerance').value = 0;
-    return;
-  }
-
-  const s = (window.__adminSchedules || [])[Number(index)];
-  if (!s) return;
-
-  $('cfgScheduleId').value = s.id || '';
-  $('cfgScheduleName').value = s.nama || 'Reguler';
-  $('cfgDay').value = s.hari || 'SENIN';
-  $('cfgIn').value = s.jamMasuk || '';
-  $('cfgOut').value = s.jamPulang || '';
-  $('cfgTolerance').value = s.toleransiMenit ?? 0;
-  $('cfgInStart').value = s.mulaiMasuk || '';
-  $('cfgInEnd').value = s.batasMasuk || '';
-  $('cfgOutStart').value = s.mulaiPulang || '';
-  $('cfgOutEnd').value = s.batasPulang || '';
-  $('cfgScheduleStatus').value = s.status || 'AKTIF';
-}
-
-async function saveOfficeLocation() {
-  try {
-    const lat = $('cfgLat')?.value || '';
-    const lon = $('cfgLon')?.value || '';
-
-    if (!lat || !lon || Number(lat) === 0 || Number(lon) === 0) {
-      toast('Tekan Ambil Lokasi Saya Sekarang terlebih dahulu.');
-      return;
-    }
-
-    await api('admin_upsert_location', {
-      id: $('cfgLocId')?.value || '',
-      nama: $('cfgLocName')?.value || '',
-      alamat: $('cfgLocAddress')?.value || '',
-      latitude: lat,
-      longitude: lon,
-      radius: $('cfgRadius')?.value || 100,
-      akurasi: $('cfgAccuracy')?.value || 30,
-      tipe: 'KANTOR',
-      status: 'AKTIF'
-    });
-
-    stopAdminGeoWatch();
-    toast('Lokasi kantor & radius tersimpan.');
-    await showAdmin();
-  } catch (e) { toast(e.message); }
-}
-
-async function saveSchedule() {
-  try {
-    await api('admin_upsert_schedule', {
-      id: $('cfgScheduleId')?.value || '',
-      nama: $('cfgScheduleName')?.value || 'Reguler',
-      hari: $('cfgDay')?.value || '',
-      jamMasuk: $('cfgIn')?.value || '',
-      jamPulang: $('cfgOut')?.value || '',
-      toleransiMenit: $('cfgTolerance')?.value || 0,
-      mulaiMasuk: $('cfgInStart')?.value || '',
-      batasMasuk: $('cfgInEnd')?.value || '',
-      mulaiPulang: $('cfgOutStart')?.value || '',
-      batasPulang: $('cfgOutEnd')?.value || '',
-      status: $('cfgScheduleStatus')?.value || 'AKTIF'
-    });
-
-    toast('Jadwal kerja tersimpan.');
-    await showAdmin();
-  } catch (e) { toast(e.message); }
-}
-
-async function createActivity() {
-  try {
-    await api('admin_create_activity', {
-      nama: $('adNama')?.value || '',
-      tanggal: $('adTanggal')?.value || '',
-      jamMulai: $('adMulai')?.value || '',
-      jamSelesai: $('adSelesai')?.value || '',
-      modeLokasi: 'RADIUS',
-      idLokasi: $('adLokasi')?.value || '',
-      wajibSelfie: true,
-      aktif: true
-    });
-
-    toast('Kegiatan aktif.');
-    await showAdmin();
-  } catch (e) { toast(e.message); }
-}
-
-async function createAssignment() {
-  try {
-    await api('admin_create_assignment', {
-      idPegawai: $('tgPegawai')?.value || '',
-      jenisTugas: $('tgJenis')?.value || '',
-      namaTugas: $('tgNama')?.value || '',
-      tanggalMulai: $('tgMulai')?.value || '',
-      tanggalSelesai: $('tgSelesai')?.value || '',
-      modeLokasi: $('tgMode')?.value || 'LOKASI_AKTUAL',
-      idLokasi: $('tgLokasi')?.value || '',
-      wajibSelfie: true
-    });
-
-    toast('Penugasan disimpan.');
-    await showAdmin();
-  } catch (e) { toast(e.message); }
-}
-
-function showAccount() {
-  stopAdminGeoWatch();
-  navActive('navAccount');
-  const m = $('mainContent');
-  if (!m) return;
-
-  safeHTML(m, `
-    <div class="card">
-      <h3>${currentUser?.nama || '-'}</h3>
-      <div>${currentUser?.jabatan || '-'}</div>
-      <div class="muted">${currentUser?.bidang || ''}</div>
-      <div style="height:14px"></div>
-      <div class="list-item">ID/NIP: ${currentUser?.nip || currentUser?.idPegawai || '-'}</div>
-      <div class="list-item">Role: ${currentUser?.role || '-'}</div>
-    </div>
-  `);
-}
-
-async function init() {
-  if (token) {
-    setView(true);
-    try {
-      await afterLogin();
-    } catch (_) {
-      token = '';
-      currentUser = null;
-      localStorage.removeItem('abs_token');
-      setView(false);
-    }
-  } else {
-    setView(false);
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
+function empty(text){
+  return `<div class="empty-state"><div class="empty-icon">◌</div>${esc(text)}</div>`;
 }
+function skeletonInline(){
+  return `<div class="skeleton skel-line" style="width:45%"></div><div class="skeleton skel-line"></div><div class="skeleton skel-line" style="width:72%"></div>`;
+}
+
+window.openAttendance=openAttendance;
+window.closeModal=closeModal;
+
+document.addEventListener('DOMContentLoaded', boot);
