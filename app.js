@@ -9,6 +9,8 @@ let currentPosition = null;
 let selfieDataUrl = '';
 let cameraStream = null;
 let loginBusy = false;
+let adminGeoWatchId = null;
+let adminGeoTimeout = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -73,16 +75,10 @@ async function api(action, payload = {}) {
       throw new Error('Respons server tidak dapat dibaca.');
     }
 
-    if (!response.ok && json?.message) {
-      throw new Error(json.message);
-    }
-
-    if (!json.ok) {
-      throw new Error(json.message || 'Proses gagal.');
-    }
+    if (!response.ok && json?.message) throw new Error(json.message);
+    if (!json.ok) throw new Error(json.message || 'Proses gagal.');
 
     return json.data;
-
   } catch (e) {
     if (e?.name === 'AbortError') {
       throw new Error('Server terlalu lama merespons. Coba lagi.');
@@ -131,7 +127,6 @@ async function login() {
 
     setView(true);
     await afterLogin();
-
   } catch (e) {
     console.error('login:', e);
     toast(e.message);
@@ -148,6 +143,7 @@ async function logout() {
     if (token) await api('logout', {});
   } catch (_) {}
 
+  stopAdminGeoWatch();
   token = '';
   currentUser = null;
   homeData = null;
@@ -200,7 +196,9 @@ function actionCard(type, title, subtitle, ref = '') {
 }
 
 async function showHome() {
+  stopAdminGeoWatch();
   navActive('navHome');
+
   const m = $('mainContent');
   if (!m) return;
 
@@ -266,7 +264,6 @@ async function showHome() {
     });
 
     safeHTML(m, html);
-
   } catch (e) {
     safeHTML(m, `<div class="card">${e.message}</div>`);
     throw e;
@@ -380,7 +377,6 @@ async function submitAttendance() {
     toast(`Berhasil: ${data.status}`);
     closeAttendance();
     await showHome();
-
   } catch (e) {
     toast(e.message);
     btn.disabled = false;
@@ -399,9 +395,12 @@ function closeAttendance() {
 }
 
 async function showHistory() {
+  stopAdminGeoWatch();
   navActive('navHistory');
+
   const m = $('mainContent');
   if (!m) return;
+
   safeHTML(m, '<div class="card">Memuat...</div>');
 
   try {
@@ -422,7 +421,9 @@ async function showHistory() {
 }
 
 async function showLeave() {
+  stopAdminGeoWatch();
   navActive('navLeave');
+
   const m = $('mainContent');
   if (!m) return;
 
@@ -471,7 +472,9 @@ async function submitLeave() {
 }
 
 async function showAdmin() {
+  stopAdminGeoWatch();
   navActive('navAdmin');
+
   const m = $('mainContent');
   if (!m) return;
 
@@ -501,17 +504,29 @@ async function showAdmin() {
 
       <div class="card">
         <h3>Lokasi Kantor & Radius</h3>
+
         <input id="cfgLocId" type="hidden" value="${kantor?.id || ''}">
         <input id="cfgLocName" placeholder="Nama lokasi" value="${kantor?.nama || 'Kantor DPUPR KSB'}">
         <textarea id="cfgLocAddress" placeholder="Alamat">${kantor?.alamat || ''}</textarea>
+
+        <button id="cfgGetLocationBtn" class="btn secondary" onclick="getAdminCurrentLocation()">
+          Ambil Lokasi Saya Sekarang
+        </button>
+
+        <div id="cfgGeoStatus" class="muted" style="margin:10px 0 12px">
+          Tekan tombol di atas saat berada di titik kantor.
+        </div>
+
         <div class="grid2">
           <input id="cfgLat" placeholder="Latitude" inputmode="decimal" value="${kantor?.latitude ?? ''}">
           <input id="cfgLon" placeholder="Longitude" inputmode="decimal" value="${kantor?.longitude ?? ''}">
         </div>
+
         <div class="grid2">
           <input id="cfgRadius" placeholder="Radius meter" inputmode="numeric" value="${kantor?.radius ?? 100}">
           <input id="cfgAccuracy" placeholder="Batas akurasi GPS (m)" inputmode="numeric" value="${kantor?.akurasi ?? 30}">
         </div>
+
         <button class="btn primary" onclick="saveOfficeLocation()">Simpan Lokasi & Radius</button>
       </div>
 
@@ -594,6 +609,105 @@ async function showAdmin() {
   }
 }
 
+function stopAdminGeoWatch() {
+  if (adminGeoWatchId !== null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(adminGeoWatchId);
+  }
+  adminGeoWatchId = null;
+
+  if (adminGeoTimeout) clearTimeout(adminGeoTimeout);
+  adminGeoTimeout = null;
+}
+
+function resetAdminGeoButton() {
+  const btn = $('cfgGetLocationBtn');
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = 'Ambil Lokasi Saya Sekarang';
+}
+
+function getAdminCurrentLocation() {
+  if (!navigator.geolocation) {
+    toast('GPS tidak didukung perangkat ini.');
+    return;
+  }
+
+  stopAdminGeoWatch();
+
+  const btn = $('cfgGetLocationBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Mencari lokasi...';
+  }
+
+  safeText('cfgGeoStatus', 'Mengaktifkan GPS dan mencari titik terbaik...');
+
+  let best = null;
+  const targetAccuracy = Math.max(
+    5,
+    Number($('cfgAccuracy')?.value || 30)
+  );
+
+  const acceptPosition = (pos) => {
+    if (!best || pos.coords.accuracy < best.coords.accuracy) {
+      best = pos;
+
+      if ($('cfgLat')) $('cfgLat').value = Number(pos.coords.latitude).toFixed(7);
+      if ($('cfgLon')) $('cfgLon').value = Number(pos.coords.longitude).toFixed(7);
+
+      safeText(
+        'cfgGeoStatus',
+        `Lokasi ditemukan • akurasi ±${Math.round(pos.coords.accuracy)} meter`
+      );
+    }
+
+    if (pos.coords.accuracy <= targetAccuracy) {
+      stopAdminGeoWatch();
+      resetAdminGeoButton();
+      toast(`Lokasi berhasil diambil. Akurasi ±${Math.round(pos.coords.accuracy)} m`);
+    }
+  };
+
+  const failPosition = (err) => {
+    stopAdminGeoWatch();
+    resetAdminGeoButton();
+
+    let msg = 'Lokasi tidak dapat diambil.';
+    if (err.code === 1) msg = 'Izin lokasi ditolak. Izinkan akses lokasi pada browser.';
+    if (err.code === 2) msg = 'Sinyal GPS belum tersedia. Coba di area lebih terbuka.';
+    if (err.code === 3) msg = 'Pencarian lokasi terlalu lama. Coba lagi.';
+
+    safeText('cfgGeoStatus', msg);
+    toast(msg);
+  };
+
+  adminGeoWatchId = navigator.geolocation.watchPosition(
+    acceptPosition,
+    failPosition,
+    {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 12000
+    }
+  );
+
+  adminGeoTimeout = setTimeout(() => {
+    stopAdminGeoWatch();
+    resetAdminGeoButton();
+
+    if (best) {
+      safeText(
+        'cfgGeoStatus',
+        `Lokasi digunakan • akurasi terbaik ±${Math.round(best.coords.accuracy)} meter`
+      );
+      toast('Lokasi terbaik sudah diambil.');
+    } else {
+      safeText('cfgGeoStatus', 'GPS belum menemukan lokasi. Coba lagi.');
+      toast('GPS belum menemukan lokasi.');
+    }
+  }, 15000);
+}
+
 function loadScheduleToForm() {
   const index = $('cfgScheduleSelect')?.value;
 
@@ -622,18 +736,27 @@ function loadScheduleToForm() {
 
 async function saveOfficeLocation() {
   try {
+    const lat = $('cfgLat')?.value || '';
+    const lon = $('cfgLon')?.value || '';
+
+    if (!lat || !lon) {
+      toast('Ambil lokasi terlebih dahulu.');
+      return;
+    }
+
     await api('admin_upsert_location', {
       id: $('cfgLocId')?.value || '',
       nama: $('cfgLocName')?.value || '',
       alamat: $('cfgLocAddress')?.value || '',
-      latitude: $('cfgLat')?.value || '',
-      longitude: $('cfgLon')?.value || '',
+      latitude: lat,
+      longitude: lon,
       radius: $('cfgRadius')?.value || 100,
       akurasi: $('cfgAccuracy')?.value || 30,
       tipe: 'KANTOR',
       status: 'AKTIF'
     });
 
+    stopAdminGeoWatch();
     toast('Lokasi kantor & radius tersimpan.');
     await showAdmin();
   } catch (e) {
@@ -705,7 +828,9 @@ async function createAssignment() {
 }
 
 function showAccount() {
+  stopAdminGeoWatch();
   navActive('navAccount');
+
   const m = $('mainContent');
   if (!m) return;
 
