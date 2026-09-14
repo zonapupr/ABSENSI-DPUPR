@@ -1,6 +1,79 @@
-<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0D47A1"><title>Absensi DPUPR KSB</title><link rel="stylesheet" href="/assets/style.css"></head><body>
-<div id="toast"></div>
-<section id="login" class="screen center"><div class="brand"><div class="logo">DPUPR</div><h1>Absensi DPUPR KSB</h1><p>GPS + Selfie</p><input id="username" placeholder="Username / NIP"><input id="pin" type="password" inputmode="numeric" placeholder="PIN"><button class="btn primary" onclick="doLogin()">Masuk</button></div></section>
-<section id="app" class="screen hidden"><header><div><small>ABSENSI DPUPR KSB</small><strong id="name">Pegawai</strong></div><button class="ghost" onclick="doLogout()">Keluar</button></header><main id="main"></main><nav><button id="nHome" onclick="showHome()">Beranda</button><button id="nHist" onclick="showHistory()">Rekap</button><button id="nLeave" onclick="showLeave()">Izin</button><button id="nAdmin" class="hidden" onclick="showAdmin()">Admin</button><button id="nAcc" onclick="showAccount()">Akun</button></nav></section>
-<div id="modal" class="modal hidden"><div class="modalbox"><div class="row"><b id="attTitle">Absensi</b><button class="ghost" onclick="closeAtt()">✕</button></div><div class="gps"><b id="gpsStatus">Mencari GPS...</b><div id="gpsInfo" class="muted"></div></div><video id="camera" autoplay playsinline muted></video><canvas id="canvas" class="hidden"></canvas><img id="preview" class="hidden"><div class="row gap"><button class="btn yellow" onclick="snap()">Ambil Selfie</button><button id="saveAtt" class="btn primary" disabled onclick="saveAtt()">Simpan Absen</button></div></div></div>
-<script src="/assets/app.js"></script></body></html>
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0D47A1">
+  <title>Absensi DPUPR KSB</title>
+  <link rel="stylesheet" href="/assets/style.css?v=1.3.1">
+</head>
+<body>
+  <div id="toast"></div>
+
+  <section id="loginView" class="screen center">
+    <div class="brand-card">
+      <div class="brand-mark">DPUPR</div>
+      <h1>Absensi DPUPR KSB</h1>
+      <p>GPS + Selfie</p>
+
+      <input id="username" placeholder="Username / ID / NIP" autocomplete="username">
+      <input id="pin" placeholder="PIN" type="password" inputmode="numeric" autocomplete="current-password">
+
+      <button id="loginBtn" class="btn primary" onclick="login()">
+        <span id="loginBtnText">Masuk</span>
+      </button>
+
+      <div id="loginStatus" class="login-status hidden">
+        <span class="mini-spinner"></span>
+        <span id="loginStatusText">Menghubungkan ke server...</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="appView" class="screen hidden">
+    <header class="topbar">
+      <div>
+        <div class="small">ABSENSI DPUPR KSB</div>
+        <strong id="helloName">Pegawai</strong>
+      </div>
+      <button class="icon-btn" onclick="logout()">Keluar</button>
+    </header>
+
+    <main id="mainContent" class="main"></main>
+
+    <nav class="bottom-nav">
+      <button onclick="showHome()" id="navHome" class="active">Beranda</button>
+      <button onclick="showHistory()" id="navHistory">Rekap</button>
+      <button onclick="showLeave()" id="navLeave">Izin</button>
+      <button onclick="showAdmin()" id="navAdmin" class="hidden">Admin</button>
+      <button onclick="showAccount()" id="navAccount">Akun</button>
+    </nav>
+  </section>
+
+  <div id="attendanceModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <strong id="attTitle">Absensi</strong>
+        <button class="icon-btn" onclick="closeAttendance()">✕</button>
+      </div>
+
+      <div class="gps-box">
+        <div><b>Status GPS</b></div>
+        <div id="gpsStatus">Mencari lokasi...</div>
+        <div id="gpsInfo" class="muted"></div>
+      </div>
+
+      <video id="camera" autoplay playsinline muted></video>
+      <canvas id="snapshot" class="hidden"></canvas>
+      <img id="preview" class="hidden selfie-preview" alt="Selfie">
+
+      <div class="actions">
+        <button class="btn secondary" onclick="captureSelfie()">Ambil Selfie</button>
+        <button id="submitAttendBtn" class="btn primary" disabled onclick="submitAttendance()">Simpan Absen</button>
+      </div>
+    </div>
+  </div>
+
+<script src="/assets/app.js?v=1.3.1"></script>
+</body>
+</html>
