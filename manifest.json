@@ -1,0 +1,9 @@
+{
+  "name": "Absensi DPUPR KSB",
+  "short_name": "Absensi DPUPR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f6fa",
+  "theme_color": "#0f4fb6",
+  "description": "Aplikasi Absensi DPUPR Kabupaten Sumbawa Barat"
+}
