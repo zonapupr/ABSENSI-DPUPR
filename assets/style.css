@@ -267,3 +267,42 @@ textarea{min-height:92px;resize:vertical}
   .schedule-hours{font-size:22px}
   .schedule-date{font-size:13px}
 }
+
+
+/* ===== V2.2 TPLP / ASN ===== */
+.main-menu-grid.asn-menu{
+  grid-template-columns:repeat(3,1fr);
+}
+@media(max-width:520px){
+  .main-menu-grid.asn-menu{
+    grid-template-columns:repeat(3,1fr);
+  }
+}
+
+
+/* ===== V2.3 APEL + DEVICE ===== */
+.apel-user-list{display:flex;flex-direction:column;gap:12px}
+.apel-user-card{
+  border:1px solid var(--line);border-radius:18px;padding:16px;background:#fff
+}
+.apel-user-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.apel-user-title{font-size:17px;font-weight:900}
+.apel-user-time{font-size:22px;font-weight:950;color:var(--blue);margin:13px 0}
+
+.apel-admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.apel-admin-card{margin-bottom:0}
+.day-check-grid{display:flex;flex-wrap:wrap;gap:8px}
+.day-check{position:relative}
+.day-check input{position:absolute;opacity:0;pointer-events:none}
+.day-check span{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:47px;padding:9px 10px;border-radius:12px;
+  background:#eef3f8;color:#607086;font-size:12px;font-weight:850;
+  border:1px solid transparent
+}
+.day-check input:checked + span{
+  background:var(--blue);color:#fff;border-color:var(--blue)
+}
+@media(max-width:760px){
+  .apel-admin-grid{grid-template-columns:1fr}
+}

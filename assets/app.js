@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.2.2',
+  version: '2.3.0',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -13,11 +13,42 @@ const APP = {
   selfieData: '',
   busyCount: 0,
   adminData: {
-    dashboard:null, employees:[], locations:[], schedules:[], settings:[]
+    dashboard:null,
+    employees:[],
+    locations:[],
+    schedules:[],
+    apelSchedules:[],
+    settings:[]
   }
 };
 
 const $ = (id) => document.getElementById(id);
+
+const DEVICE = getOrCreateAttendanceDevice();
+
+function randomHex(bytes=24){
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return [...arr].map(x => x.toString(16).padStart(2,'0')).join('');
+}
+
+function getOrCreateAttendanceDevice(){
+  let id = localStorage.getItem('abs_device_id') || '';
+  let key = localStorage.getItem('abs_device_key') || '';
+
+  if(!id){
+    id = (crypto.randomUUID ? crypto.randomUUID() : randomHex(16));
+    localStorage.setItem('abs_device_id', id);
+  }
+
+  if(!key){
+    key = randomHex(32);
+    localStorage.setItem('abs_device_key', key);
+  }
+
+  return {id,key};
+}
+
 const qsa = (sel, root=document) => [...root.querySelectorAll(sel)];
 const esc = (v='') => String(v ?? '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 const roleIsAdmin = () => ['ADMIN','SUPER_ADMIN'].includes(String(APP.user?.role || '').toUpperCase());
@@ -340,10 +371,9 @@ function mainMenuTile(key,icon,label){
 
 function normalizeActivityType(x){
   const explicit = String(x?.jenisKegiatan || '').toUpperCase().trim();
-  if(['APEL','RAPAT','DIKLAT'].includes(explicit)) return explicit;
+  if(['RAPAT','DIKLAT'].includes(explicit)) return explicit;
 
   const name = String(x?.nama || '').toUpperCase();
-  if(name.includes('APEL')) return 'APEL';
   if(name.includes('RAPAT')) return 'RAPAT';
   if(name.includes('DIKLAT') || name.includes('PELATIHAN') || name.includes('BIMTEK')) return 'DIKLAT';
   return 'KEGIATAN';
@@ -353,7 +383,8 @@ function openMainMenu(key){
   if(key === 'ABSEN') return openRegularAttendanceMenu();
   if(key === 'IZIN') return navigate('leave');
   if(key === 'DINAS') return openAssignmentMenu();
-  if(['APEL','RAPAT','DIKLAT'].includes(key)) return openActivityMenu(key);
+  if(key === 'APEL') return openApelMenu();
+  if(['RAPAT','DIKLAT'].includes(key)) return openActivityMenu(key);
 }
 
 function openRegularAttendanceMenu(){
@@ -399,6 +430,80 @@ function confirmAttendance(type,ref,title){
   $('confirmYesBtn').addEventListener('click', async()=>{
     closeModal();
     await openAttendance(type,ref,title);
+  });
+}
+
+
+function apelStatusLabel(status){
+  const s = String(status || '');
+  if(s === 'SUDAH_ABSEN') return 'Sudah Absen';
+  if(s === 'AKTIF') return 'Absen Sekarang';
+  if(s === 'BELUM_DIBUKA') return 'Belum Dibuka';
+  if(s === 'SELESAI') return 'Sudah Ditutup';
+  return 'Belum Diatur';
+}
+
+function apelStatusClass(status){
+  const s = String(status || '');
+  if(s === 'SUDAH_ABSEN') return 'success';
+  if(s === 'AKTIF') return 'info';
+  if(s === 'SELESAI') return 'danger';
+  return 'warning';
+}
+
+function openApelMenu(){
+  const rows = APP.home?.apel || [];
+
+  if(!rows.length){
+    toast('Jadwal Apel belum diatur oleh Admin.','warning');
+    return;
+  }
+
+  const order = {PAGI:1,SORE:2};
+  const sorted = [...rows].sort((a,b)=>(order[a.jenisApel]||9)-(order[b.jenisApel]||9));
+
+  openModal(`
+    <div class="modal-head">
+      <h2>Absensi Apel</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+
+    <div class="apel-user-list">
+      ${sorted.map((x,i)=>`
+        <div class="apel-user-card">
+          <div class="apel-user-top">
+            <div>
+              <div class="apel-user-title">${esc(x.nama || ('Apel '+x.jenisApel))}</div>
+              <div class="list-meta">${esc(x.lokasiNama || '-')}</div>
+            </div>
+            <span class="badge ${apelStatusClass(x.status)}">${apelStatusLabel(x.status)}</span>
+          </div>
+
+          <div class="apel-user-time">
+            ${esc(fmtTime(x.jamMulai))} - ${esc(fmtTime(x.jamBatas))}
+          </div>
+
+          <button
+            class="btn ${x.status === 'AKTIF' ? 'primary' : 'ghost'} block apel-attend-btn"
+            type="button"
+            data-apel-index="${i}"
+            ${x.status === 'AKTIF' ? '' : 'disabled'}>
+            ${x.status === 'AKTIF' ? 'Mulai Apel' : apelStatusLabel(x.status)}
+          </button>
+        </div>
+      `).join('')}
+    </div>
+  `);
+
+  qsa('[data-apel-index]', $('modalRoot')).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const x = sorted[Number(btn.dataset.apelIndex)];
+      if(!x || x.status !== 'AKTIF') return;
+
+      closeModal();
+      const type = x.jenisApel === 'SORE' ? 'APEL_SORE' : 'APEL_PAGI';
+      confirmAttendance(type, x.idApel, x.nama || `Apel ${x.jenisApel}`);
+    });
   });
 }
 
@@ -597,16 +702,19 @@ async function renderAdmin(){
 }
 
 async function loadAdminBase(){
-  const [dashboard, employees, locations, schedules] = await Promise.all([
+  const [dashboard, employees, locations, schedules, apelSchedules] = await Promise.all([
     api('admin_dashboard'),
     api('admin_employees'),
     api('admin_locations'),
-    api('admin_schedules')
+    api('admin_schedules'),
+    api('admin_apel_schedules')
   ]);
+
   APP.adminData.dashboard = dashboard;
   APP.adminData.employees = employees || [];
   APP.adminData.locations = locations || [];
   APP.adminData.schedules = schedules || [];
+  APP.adminData.apelSchedules = apelSchedules || [];
 
   try{
     APP.adminData.settings = await api('admin_settings');
@@ -621,6 +729,7 @@ function renderAdminShell(){
       ${adminTabBtn('overview','Ringkasan')}
       ${adminTabBtn('location','Lokasi & Radius')}
       ${adminTabBtn('schedule','Jadwal')}
+      ${adminTabBtn('apel','Apel')}
       ${adminTabBtn('activity','Kegiatan')}
       ${adminTabBtn('assignment','Penugasan')}
       ${adminTabBtn('employees','Pegawai')}
@@ -647,6 +756,7 @@ function renderAdminPanel(){
   if(APP.adminTab==='overview') p.innerHTML = adminOverview();
   if(APP.adminTab==='location') p.innerHTML = adminLocation();
   if(APP.adminTab==='schedule') p.innerHTML = adminSchedule();
+  if(APP.adminTab==='apel') p.innerHTML = adminApel();
   if(APP.adminTab==='activity') p.innerHTML = adminActivity();
   if(APP.adminTab==='assignment') p.innerHTML = adminAssignment();
   if(APP.adminTab==='employees') p.innerHTML = adminEmployees();
@@ -715,6 +825,245 @@ function adminSchedule(){
     </div>`;
 }
 
+
+function getAdminApelRecord(type){
+  const t = String(type).toUpperCase();
+  return APP.adminData.apelSchedules.find(x => String(x.jenisApel).toUpperCase() === t) || {};
+}
+
+function getAdminApelLocation(type){
+  const t = 'APEL_' + String(type).toUpperCase();
+  return APP.adminData.locations.find(x => String(x.tipe).toUpperCase() === t) || {};
+}
+
+function apelDayChecks(type, selectedCsv){
+  const selected = String(selectedCsv || 'SENIN,SELASA,RABU,KAMIS,JUMAT')
+    .split(',')
+    .map(x=>x.trim().toUpperCase());
+
+  return ['SENIN','SELASA','RABU','KAMIS','JUMAT','SABTU','MINGGU'].map(day=>`
+    <label class="day-check">
+      <input type="checkbox" data-apel-day="${type}" value="${day}" ${selected.includes(day) ? 'checked' : ''}>
+      <span>${day.slice(0,3)}</span>
+    </label>
+  `).join('');
+}
+
+function apelAdminCard(type){
+  const t = String(type).toUpperCase();
+  const schedule = getAdminApelRecord(t);
+  const loc = getAdminApelLocation(t);
+  const pagi = t === 'PAGI';
+
+  const defaultName = pagi ? 'Apel Pagi' : 'Apel Sore';
+  const defaultLocation = pagi ? 'Depan Kantor Bupati' : 'Kantor DPUPR';
+
+  return `
+    <div class="card apel-admin-card" data-apel-card="${t}">
+      <div class="card-title-row">
+        <h2>${defaultName}</h2>
+        <span class="badge info">${pagi ? 'Kantor Bupati' : 'DPUPR'}</span>
+      </div>
+
+      <input id="apel${t}ScheduleId" type="hidden" value="${esc(schedule.idApel || '')}">
+      <input id="apel${t}LocationId" type="hidden" value="${esc(loc.id || '')}">
+
+      <label class="field">
+        <span>Nama Apel</span>
+        <input id="apel${t}Name" value="${esc(schedule.nama || defaultName)}">
+      </label>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>Mulai Absen</span>
+          <input id="apel${t}Start" type="time" value="${esc(fmtTime(schedule.jamMulai || ''))}">
+        </label>
+        <label class="field">
+          <span>Batas Absen</span>
+          <input id="apel${t}End" type="time" value="${esc(fmtTime(schedule.jamBatas || ''))}">
+        </label>
+      </div>
+
+      <div class="field">
+        <span>Hari Berlaku</span>
+        <div class="day-check-grid">
+          ${apelDayChecks(t, schedule.hari)}
+        </div>
+      </div>
+
+      <label class="field">
+        <span>Nama Lokasi</span>
+        <input id="apel${t}LocName" value="${esc(loc.nama || defaultLocation)}">
+      </label>
+
+      <label class="field">
+        <span>Alamat</span>
+        <textarea id="apel${t}Address" placeholder="Alamat lokasi apel">${esc(loc.alamat || '')}</textarea>
+      </label>
+
+      <button id="apel${t}GpsBtn" class="btn yellow block" type="button">
+        📍 Ambil Lokasi Saya Sekarang
+      </button>
+
+      <div id="apel${t}GpsStatus" class="inline-note">
+        ${loc.latitude ? `Titik tersimpan: ${esc(loc.latitude)}, ${esc(loc.longitude)}` : 'Belum ada titik lokasi tersimpan.'}
+      </div>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>Latitude</span>
+          <input id="apel${t}Lat" inputmode="decimal" value="${esc(loc.latitude ?? '')}">
+        </label>
+        <label class="field">
+          <span>Longitude</span>
+          <input id="apel${t}Lon" inputmode="decimal" value="${esc(loc.longitude ?? '')}">
+        </label>
+        <label class="field">
+          <span>Radius (meter)</span>
+          <input id="apel${t}Radius" type="number" min="1" value="${esc(loc.radius ?? 100)}">
+        </label>
+        <label class="field">
+          <span>Batas Akurasi GPS (meter)</span>
+          <input id="apel${t}Accuracy" type="number" min="1" value="${esc(loc.akurasi ?? 30)}">
+        </label>
+      </div>
+
+      <button id="apel${t}SaveBtn" class="btn primary block" type="button">
+        Simpan ${defaultName}
+      </button>
+    </div>
+  `;
+}
+
+function adminApel(){
+  return `
+    <div class="apel-admin-grid">
+      ${apelAdminCard('PAGI')}
+      ${apelAdminCard('SORE')}
+    </div>
+  `;
+}
+
+async function captureAdminApelGps(type){
+  const t = String(type).toUpperCase();
+  const btn = $(`apel${t}GpsBtn`);
+  const status = $(`apel${t}GpsStatus`);
+
+  if(!navigator.geolocation){
+    toast('GPS tidak didukung perangkat ini.','error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner dark"></span>Mencari lokasi...';
+  status.className = 'inline-note';
+  status.textContent = 'Mencari titik GPS terbaik...';
+
+  let best = null;
+  let watch = null;
+  let timer = null;
+
+  try{
+    await new Promise((resolve,reject)=>{
+      const target = Math.max(5, Number($(`apel${t}Accuracy`).value || 30));
+
+      watch = navigator.geolocation.watchPosition(pos=>{
+        if(!best || pos.coords.accuracy < best.coords.accuracy){
+          best = pos;
+          $(`apel${t}Lat`).value = Number(pos.coords.latitude).toFixed(7);
+          $(`apel${t}Lon`).value = Number(pos.coords.longitude).toFixed(7);
+          status.textContent = `Lokasi ditemukan • akurasi ±${Math.round(pos.coords.accuracy)} meter`;
+        }
+
+        if(pos.coords.accuracy <= target) resolve();
+      }, reject, {
+        enableHighAccuracy:true,
+        maximumAge:0,
+        timeout:12000
+      });
+
+      timer = setTimeout(()=>{
+        best ? resolve() : reject(new Error('GPS belum menemukan lokasi.'));
+      },15000);
+    });
+
+    status.className='inline-note good';
+    status.textContent=`Lokasi siap • akurasi terbaik ±${Math.round(best.coords.accuracy)} meter`;
+    toast('Lokasi apel berhasil diambil.','success');
+
+  }catch(e){
+    status.className='inline-note bad';
+    status.textContent=e.message || 'Lokasi tidak dapat diambil.';
+    toast(status.textContent,'error');
+
+  }finally{
+    if(watch !== null) navigator.geolocation.clearWatch(watch);
+    if(timer) clearTimeout(timer);
+    btn.disabled = false;
+    btn.textContent = '📍 Ambil Lokasi Saya Sekarang';
+  }
+}
+
+function selectedApelDays(type){
+  const t = String(type).toUpperCase();
+  return qsa(`[data-apel-day="${t}"]:checked`)
+    .map(x=>x.value)
+    .join(',');
+}
+
+async function saveAdminApel(type){
+  const t = String(type).toUpperCase();
+  const pagi = t === 'PAGI';
+
+  const locationPayload = {
+    id:$(`apel${t}LocationId`).value,
+    nama:$(`apel${t}LocName`).value.trim(),
+    alamat:$(`apel${t}Address`).value.trim(),
+    latitude:$(`apel${t}Lat`).value,
+    longitude:$(`apel${t}Lon`).value,
+    radius:$(`apel${t}Radius`).value,
+    akurasi:$(`apel${t}Accuracy`).value,
+    tipe:`APEL_${t}`,
+    status:'AKTIF'
+  };
+
+  const schedulePayload = {
+    id:$(`apel${t}ScheduleId`).value,
+    jenisApel:t,
+    nama:$(`apel${t}Name`).value.trim() || (pagi ? 'Apel Pagi' : 'Apel Sore'),
+    hari:selectedApelDays(t),
+    jamMulai:$(`apel${t}Start`).value,
+    jamBatas:$(`apel${t}End`).value,
+    wajibSelfie:true,
+    status:'AKTIF'
+  };
+
+  if(!locationPayload.nama || !locationPayload.latitude || !locationPayload.longitude){
+    toast('Nama dan titik lokasi apel wajib diisi.','warning');
+    return;
+  }
+
+  if(!schedulePayload.hari || !schedulePayload.jamMulai || !schedulePayload.jamBatas){
+    toast('Hari, mulai absen, dan batas absen wajib diisi.','warning');
+    return;
+  }
+
+  const btn = $(`apel${t}SaveBtn`);
+
+  await busyButton(btn, async()=>{
+    const locResult = await api('admin_upsert_location', locationPayload);
+    schedulePayload.idLokasi = locResult.id;
+
+    await api('admin_upsert_apel_schedule', schedulePayload);
+
+    toast(`${pagi ? 'Apel Pagi' : 'Apel Sore'} berhasil disimpan.`,'success');
+
+    await loadAdminBase();
+    renderAdminPanel();
+
+  },'Menyimpan...');
+}
+
 function adminActivity(){
   const locOptions = APP.adminData.locations.map(x => `<option value="${esc(x.id)}">${esc(x.nama)}</option>`).join('');
   return `
@@ -723,7 +1072,6 @@ function adminActivity(){
       <div class="form-grid">
         <label class="field"><span>Jenis Kegiatan</span>
           <select id="actType">
-            <option value="APEL">APEL</option>
             <option value="RAPAT">RAPAT</option>
             <option value="DIKLAT">DIKLAT</option>
           </select>
@@ -774,10 +1122,12 @@ function adminEmployees(){
                 <div class="list-title">${esc(x.nama)}</div>
                 <div class="list-meta">${esc(x.jabatan || '-')} • ${esc(x.bidang || '-')} • ${esc(x.jenisPegawai || (x.isTplp ? 'TPLP' : 'ASN'))}</div>
                 <div class="list-meta">ID/NIP: ${esc(x.nip || x.idPegawai)}</div>
+                <div class="list-meta">Perangkat Absen: ${x.deviceRegistered ? 'TERDAFTAR' : 'BELUM TERDAFTAR'}</div>
               </div>
               <span class="badge info">${esc(x.role)}</span>
             </div>
             <button class="btn ghost block" type="button" data-reset-pin="${esc(x.idPegawai)}" data-name="${esc(x.nama)}" style="margin-top:10px">Reset PIN</button>
+            <button class="btn danger block" type="button" data-reset-device="${esc(x.idPegawai)}" data-name="${esc(x.nama)}" style="margin-top:8px">Reset Perangkat Absen</button>
           </div>`).join('')}
       </div>
     </div>`;
@@ -792,6 +1142,12 @@ function bindAdminPanel(){
     $('schedulePicker')?.addEventListener('change', loadScheduleForm);
     $('saveScheduleBtn')?.addEventListener('click', saveSchedule);
   }
+  if(APP.adminTab==='apel'){
+    ['PAGI','SORE'].forEach(t=>{
+      $(`apel${t}GpsBtn`)?.addEventListener('click', ()=>captureAdminApelGps(t));
+      $(`apel${t}SaveBtn`)?.addEventListener('click', ()=>saveAdminApel(t));
+    });
+  }
   if(APP.adminTab==='activity'){
     $('saveActivityBtn')?.addEventListener('click', saveActivity);
   }
@@ -800,6 +1156,7 @@ function bindAdminPanel(){
   }
   if(APP.adminTab==='employees'){
     qsa('[data-reset-pin]').forEach(b => b.addEventListener('click', () => openPinReset(b.dataset.resetPin,b.dataset.name)));
+    qsa('[data-reset-device]').forEach(b => b.addEventListener('click', () => openDeviceReset(b.dataset.resetDevice,b.dataset.name)));
   }
 }
 
@@ -961,6 +1318,38 @@ function openPinReset(id,name){
   });
 }
 
+
+function openDeviceReset(id,name){
+  openModal(`
+    <div class="modal-head">
+      <h2>Reset Perangkat Absen</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+
+    <div class="inline-note warn">
+      Pegawai: <b>${esc(name)}</b><br>
+      Setelah di-reset, perangkat berikutnya yang melakukan absensi akan menjadi HP resmi baru.
+    </div>
+
+    <div class="form-actions">
+      <button id="cancelDeviceResetBtn" class="btn ghost" type="button">Batal</button>
+      <button id="confirmDeviceResetBtn" class="btn danger" type="button">Reset Perangkat</button>
+    </div>
+  `);
+
+  $('cancelDeviceResetBtn').addEventListener('click', closeModal);
+
+  $('confirmDeviceResetBtn').addEventListener('click', async()=>{
+    await busyButton($('confirmDeviceResetBtn'), async()=>{
+      await api('admin_reset_device',{idPegawai:id});
+      toast('Perangkat absensi berhasil di-reset.','success');
+      closeModal();
+      await loadAdminBase();
+      renderAdminPanel();
+    },'Mereset...');
+  });
+}
+
 function renderAccount(){
   const u=APP.user||{};
   page(`
@@ -976,6 +1365,7 @@ function renderAccount(){
         <div class="list-item"><div class="list-title">ID / NIP</div><div class="list-meta">${esc(u.nip || u.idPegawai || '-')}</div></div>
         <div class="list-item"><div class="list-title">Bidang</div><div class="list-meta">${esc(u.bidang || '-')}</div></div>
         <div class="list-item"><div class="list-title">Jenis Pegawai</div><div class="list-meta">${esc(u.jenisPegawai || (u.isTplp ? 'TPLP' : 'ASN'))}</div></div>
+        <div class="list-item"><div class="list-title">Perangkat Absen</div><div class="list-meta">${u.deviceRegistered ? 'Terdaftar' : 'Belum terdaftar'}</div></div>
         <div class="list-item"><div class="list-title">Role</div><div class="list-meta">${esc(u.role || '-')}</div></div>
       </div>
       ${roleIsAdmin() ? `<button id="openAdminBtn" class="btn secondary block" style="margin-top:14px" type="button">⚙ Panel Admin</button>` : ''}
@@ -1101,6 +1491,8 @@ async function submitAttendance(){
       latitude:c.latitude,longitude:c.longitude,accuracy:c.accuracy,
       selfieDataUrl:APP.selfieData,
       catatan:$('attNote')?.value?.trim() || '',
+      deviceId:DEVICE.id,
+      deviceKey:DEVICE.key,
       deviceTime:new Date().toISOString(),userAgent:navigator.userAgent
     });
     const statusText = String(data?.status || '').replaceAll('_',' ');
