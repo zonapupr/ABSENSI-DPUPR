@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.4.2',
+  version: '2.5.0',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -419,15 +419,7 @@ function paintHome(data){
         </div>
       ` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal reguler TPLP hari ini.</div>`}
     </div>
-  ` : `
-    <div class="card">
-      <div class="card-title-row">
-        <h2>Absensi Kegiatan</h2>
-        <span class="badge info">ASN</span>
-      </div>
-
-    </div>
-  `;
+  ` : '';
 
   page(`
     <div class="home-profile">
@@ -448,13 +440,10 @@ function paintHome(data){
 
     <div class="main-menu-section">
       <div class="main-menu-title">Menu Utama</div>
-      <div class="main-menu-grid ${isTplp ? '' : 'asn-menu'}">
+      <div class="main-menu-grid core-focus ${isTplp ? 'tplp-core' : 'asn-core'}">
         ${isTplp ? mainMenuTile('ABSEN','🗓️','Absen') : ''}
-        ${mainMenuTile('APEL','👥','Apel')}
-        ${mainMenuTile('IZIN','📄','Izin')}
-        ${mainMenuTile('DINAS','💼','Dinas')}
-        ${mainMenuTile('RAPAT','📝','Rapat')}
-        ${mainMenuTile('DIKLAT','🎓','Diklat')}
+        ${isTplp ? mainMenuTile('APEL','👥','Apel') : ''}
+        ${mainMenuTile('KEGIATAN','✅','Kegiatan')}
       </div>
     </div>
   `);
@@ -513,11 +502,9 @@ function normalizeActivityType(x){
 }
 
 function openMainMenu(key){
-  if(key === 'ABSEN') return openRegularAttendanceMenu();
-  if(key === 'IZIN') return navigate('leave');
-  if(key === 'DINAS') return openAssignmentMenu();
-  if(key === 'APEL') return openApelMenu();
-  if(['RAPAT','DIKLAT'].includes(key)) return openActivityMenu(key);
+  if(key==='ABSEN') return openRegularAttendanceMenu();
+  if(key==='APEL') return openApelMenu();
+  if(key==='KEGIATAN') return openActivityMenu();
 }
 
 function openRegularAttendanceMenu(){
@@ -585,6 +572,13 @@ function apelStatusClass(status){
 }
 
 function openApelMenu(){
+  const isTplp=!!(APP.home?.user?.isTplp ?? APP.user?.isTplp);
+
+  if(!isTplp){
+    toast('Apel saat ini khusus TPLP.','warning');
+    return;
+  }
+
   const rows = APP.home?.apel || [];
 
   if(!rows.length){
@@ -663,7 +657,7 @@ async function ensureActivitiesLoaded(){
   return APP.home.todayActivities;
 }
 
-async function openActivityMenu(kind){
+async function openActivityMenu(){
   let allToday=[];
 
   try{
@@ -673,74 +667,83 @@ async function openActivityMenu(kind){
     return;
   }
 
-  const list=allToday.filter(x=>normalizeActivityType(x)===kind);
-  const label=kind.charAt(0)+kind.slice(1).toLowerCase();
-
-  if(!list.length){
-    toast(`${label} belum dijadwalkan oleh Admin hari ini.`,'warning');
+  if(!allToday.length){
+    toast('Tidak ada kegiatan yang ditugaskan untuk Anda hari ini.','warning');
     return;
   }
 
-  const active=list.filter(
-    x=>x.statusWaktu==='AKTIF' || !x.statusWaktu
+  const active=allToday.filter(
+    x=>(x.statusWaktu==='AKTIF' || !x.statusWaktu) && !x.sudahAbsen
   );
-
-  if(!active.length){
-    const upcoming=list.find(x=>x.statusWaktu==='BELUM_DIBUKA');
-    if(upcoming){
-      toast(
-        `${label} belum dibuka. Waktu absen ${fmtTime(upcoming.jamMulai)} - ${fmtTime(upcoming.jamSelesai)}.`,
-        'warning',
-        4200
-      );
-      return;
-    }
-
-    const finished=list.find(x=>x.statusWaktu==='SELESAI');
-    if(finished){
-      toast(
-        `Batas absensi ${label} sudah berakhir pada ${fmtTime(finished.jamSelesai)}.`,
-        'warning',
-        4200
-      );
-      return;
-    }
-
-    toast(`${label} belum dapat diabsen.`,'warning');
-    return;
-  }
 
   if(active.length===1){
     const x=active[0];
     return confirmAttendance(
       'KEGIATAN',
       x.idKegiatan,
-      `${label}: ${x.nama}`
+      x.nama
     );
   }
 
   openModal(`
     <div class="modal-head">
-      <h2>Pilih ${esc(label)}</h2>
+      <h2>Kegiatan Hari Ini</h2>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
+
     <div class="list">
-      ${active.map((x,i)=>`
-        <button class="list-item activity-choice" type="button" data-activity-index="${i}">
-          <div class="list-title">${esc(x.nama)}</div>
-          <div class="list-meta">Batas absen: ${esc(fmtTime(x.jamMulai))} - ${esc(fmtTime(x.jamSelesai))}</div>
-        </button>`).join('')}
+      ${allToday.map((x,i)=>{
+        const done=!!x.sudahAbsen;
+        const activeNow=(x.statusWaktu==='AKTIF' || !x.statusWaktu) && !done;
+
+        let status='Belum Dibuka';
+        let cls='warning';
+
+        if(done){
+          status='Sudah Absen';
+          cls='success';
+        }else if(activeNow){
+          status='Absen Sekarang';
+          cls='info';
+        }else if(x.statusWaktu==='SELESAI'){
+          status='Ditutup';
+          cls='danger';
+        }
+
+        return `
+          <div class="list-item">
+            <div class="list-top">
+              <div>
+                <div class="list-title">${esc(x.nama)}</div>
+                <div class="list-meta">${esc(fmtTime(x.jamMulai))} - ${esc(fmtTime(x.jamSelesai))}</div>
+              </div>
+              <span class="badge ${cls}">${status}</span>
+            </div>
+
+            ${activeNow ? `
+              <button class="btn primary block activity-attend-btn"
+                type="button"
+                data-activity-index="${i}"
+                style="margin-top:10px">
+                Absen Kegiatan
+              </button>
+            ` : ''}
+          </div>
+        `;
+      }).join('')}
     </div>
   `);
 
   qsa('[data-activity-index]',$('modalRoot')).forEach(btn=>{
     btn.addEventListener('click',()=>{
-      const x=active[Number(btn.dataset.activityIndex)];
+      const x=allToday[Number(btn.dataset.activityIndex)];
+      if(!x) return;
+
       closeModal();
       confirmAttendance(
         'KEGIATAN',
         x.idKegiatan,
-        `${label}: ${x.nama}`
+        x.nama
       );
     });
   });
@@ -955,7 +958,6 @@ function renderAdminShell(){
       ${adminTabBtn('schedule','Jadwal')}
       ${adminTabBtn('apel','Apel')}
       ${adminTabBtn('activity','Kegiatan')}
-      ${adminTabBtn('assignment','Penugasan')}
       ${adminTabBtn('employees','Pegawai')}
     </div>
     <div id="adminPanel"></div>
@@ -982,7 +984,6 @@ function renderAdminPanel(){
   if(APP.adminTab==='schedule') p.innerHTML = adminSchedule();
   if(APP.adminTab==='apel') p.innerHTML = adminApel();
   if(APP.adminTab==='activity') p.innerHTML = adminActivity();
-  if(APP.adminTab==='assignment') p.innerHTML = adminAssignment();
   if(APP.adminTab==='employees') p.innerHTML = adminEmployees();
   bindAdminPanel();
 }
@@ -1288,28 +1289,121 @@ async function saveAdminApel(type){
   },'Menyimpan...');
 }
 
+function activityBidangOptions(){
+  const names=[...new Set(
+    (APP.adminData.employees || [])
+      .map(x=>String(x.bidang || '').trim())
+      .filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b,'id'));
+
+  return names
+    .map(x=>`<option value="${esc(x)}">${esc(x)}</option>`)
+    .join('');
+}
+
+function activityEmployeeChecklist(){
+  const rows=(APP.adminData.employees || [])
+    .slice()
+    .sort((a,b)=>String(a.nama || '').localeCompare(String(b.nama || ''),'id'));
+
+  return rows.map(x=>`
+    <label class="participant-check"
+      data-participant-name="${esc((x.nama || '').toLowerCase())}"
+      data-participant-bidang="${esc((x.bidang || '').toLowerCase())}">
+      <input type="checkbox"
+        data-activity-participant
+        value="${esc(x.idPegawai)}">
+      <span>
+        <b>${esc(x.nama)}</b>
+        <small>${esc(x.bidang || '-')} • ${esc(x.jenisPegawai || (x.isTplp ? 'TPLP' : 'ASN'))}</small>
+      </span>
+    </label>
+  `).join('');
+}
+
 function adminActivity(){
-  const locOptions = APP.adminData.locations.map(x => `<option value="${esc(x.id)}">${esc(x.nama)}</option>`).join('');
+  const locOptions=(APP.adminData.locations || [])
+    .map(x=>`<option value="${esc(x.id)}">${esc(x.nama)}</option>`)
+    .join('');
+
   return `
     <div class="card">
-      <div class="card-title-row"><h2>Buat Kegiatan</h2><span class="badge info">Dinamis</span></div>
+      <div class="card-title-row">
+        <h2>Buat Kegiatan</h2>
+        <span class="badge info">Peserta Wajib</span>
+      </div>
+
+      <label class="field">
+        <span>Nama Kegiatan</span>
+        <input id="actName" placeholder="Contoh: Rapat Evaluasi / Gotong Royong / Sosialisasi">
+      </label>
+
       <div class="form-grid">
-        <label class="field"><span>Jenis Kegiatan</span>
-          <select id="actType">
-            <option value="RAPAT">RAPAT</option>
-            <option value="DIKLAT">DIKLAT</option>
-          </select>
+        <label class="field">
+          <span>Tanggal</span>
+          <input id="actDate" type="date">
         </label>
-        <label class="field"><span>Tanggal</span><input id="actDate" type="date"></label>
+
+        <label class="field">
+          <span>Lokasi</span>
+          <select id="actLocation">${locOptions}</select>
+        </label>
+
+        <label class="field">
+          <span>Mulai Absen</span>
+          <input id="actStart" type="time">
+        </label>
+
+        <label class="field">
+          <span>Batas Absen</span>
+          <input id="actEnd" type="time">
+        </label>
       </div>
-      <label class="field"><span>Nama Kegiatan</span><input id="actName" placeholder="Contoh: Apel Pagi / Apel Sore / Rapat Evaluasi"></label>
-      <div class="form-grid">
-        <label class="field"><span>Lokasi</span><select id="actLocation">${locOptions}</select></label>
-        <label class="field"><span>Mulai Absen</span><input id="actStart" type="time"></label>
-        <label class="field"><span>Batas Absen</span><input id="actEnd" type="time"></label>
+
+      <div class="participant-section">
+        <div class="field">
+          <span>Peserta Kegiatan</span>
+          <select id="actParticipantMode">
+            <option value="SEMUA">Semua Pegawai</option>
+            <option value="ASN">ASN Saja</option>
+            <option value="TPLP">TPLP Saja</option>
+            <option value="BIDANG">Bidang/Subbag Tertentu</option>
+            <option value="PILIH">Pilih Pegawai Tertentu</option>
+          </select>
+        </div>
+
+        <div id="actBidangWrap" class="field hidden">
+          <span>Pilih Bidang/Subbag</span>
+          <select id="actParticipantBidang">
+            <option value="">-- pilih --</option>
+            ${activityBidangOptions()}
+          </select>
+        </div>
+
+        <div id="actCustomWrap" class="hidden">
+          <label class="field">
+            <span>Cari Pegawai</span>
+            <input id="actParticipantSearch" placeholder="Ketik nama atau bidang">
+          </label>
+
+          <div class="participant-toolbar">
+            <span id="actParticipantCount">0 dipilih</span>
+            <button id="actSelectAllVisible" class="btn ghost compact" type="button">
+              Pilih yang Tampil
+            </button>
+          </div>
+
+          <div id="actParticipantList" class="participant-list">
+            ${activityEmployeeChecklist()}
+          </div>
+        </div>
       </div>
-      <button id="saveActivityBtn" class="btn primary block" type="button">Aktifkan Kegiatan</button>
-    </div>`;
+
+      <button id="saveActivityBtn" class="btn primary block" type="button">
+        Simpan Kegiatan
+      </button>
+    </div>
+  `;
 }
 
 function adminAssignment(){
@@ -1374,9 +1468,14 @@ function bindAdminPanel(){
   }
   if(APP.adminTab==='activity'){
     $('saveActivityBtn')?.addEventListener('click', saveActivity);
-  }
-  if(APP.adminTab==='assignment'){
-    $('saveAssignmentBtn')?.addEventListener('click', saveAssignment);
+    $('actParticipantMode')?.addEventListener('change', updateActivityParticipantUi);
+    $('actParticipantSearch')?.addEventListener('input', filterActivityParticipants);
+    $('actSelectAllVisible')?.addEventListener('click', selectVisibleActivityParticipants);
+    qsa('[data-activity-participant]').forEach(x=>{
+      x.addEventListener('change', updateActivityParticipantCount);
+    });
+    updateActivityParticipantUi();
+    updateActivityParticipantCount();
   }
   if(APP.adminTab==='employees'){
     qsa('[data-reset-pin]').forEach(b => b.addEventListener('click', () => openPinReset(b.dataset.resetPin,b.dataset.name)));
@@ -1489,21 +1588,84 @@ async function saveSchedule(){
   },'Menyimpan...');
 }
 
+function updateActivityParticipantUi(){
+  const mode=$('actParticipantMode')?.value || 'SEMUA';
+  $('actBidangWrap')?.classList.toggle('hidden',mode!=='BIDANG');
+  $('actCustomWrap')?.classList.toggle('hidden',mode!=='PILIH');
+}
+
+function selectedActivityParticipantIds(){
+  return qsa('[data-activity-participant]:checked')
+    .map(x=>x.value);
+}
+
+function updateActivityParticipantCount(){
+  const el=$('actParticipantCount');
+  if(el) el.textContent=`${selectedActivityParticipantIds().length} dipilih`;
+}
+
+function filterActivityParticipants(){
+  const q=String($('actParticipantSearch')?.value || '').trim().toLowerCase();
+
+  qsa('.participant-check').forEach(row=>{
+    const hay=`${row.dataset.participantName || ''} ${row.dataset.participantBidang || ''}`;
+    row.classList.toggle('hidden',!!q && !hay.includes(q));
+  });
+}
+
+function selectVisibleActivityParticipants(){
+  const visible=qsa('.participant-check').filter(row=>!row.classList.contains('hidden'));
+  const boxes=visible.map(row=>row.querySelector('[data-activity-participant]')).filter(Boolean);
+  const shouldCheck=boxes.some(x=>!x.checked);
+
+  boxes.forEach(x=>x.checked=shouldCheck);
+  updateActivityParticipantCount();
+}
+
 async function saveActivity(){
+  const mode=$('actParticipantMode').value;
+
   const payload={
-    jenisKegiatan:$('actType').value,
-    nama:$('actName').value.trim(),tanggal:$('actDate').value,
-    jamMulai:$('actStart').value,jamSelesai:$('actEnd').value,
-    modeLokasi:'RADIUS',idLokasi:$('actLocation').value,wajibSelfie:true,aktif:true
+    nama:$('actName').value.trim(),
+    tanggal:$('actDate').value,
+    jamMulai:$('actStart').value,
+    jamSelesai:$('actEnd').value,
+    idLokasi:$('actLocation').value,
+    wajibSelfie:true,
+    aktif:true,
+    pesertaMode:mode,
+    pesertaBidang:$('actParticipantBidang')?.value || '',
+    pesertaIds:mode==='PILIH' ? selectedActivityParticipantIds() : []
   };
+
   if(!payload.nama || !payload.tanggal || !payload.jamMulai || !payload.jamSelesai){
-    toast('Lengkapi data kegiatan.','warning'); return;
+    toast('Nama, tanggal, mulai absen, dan batas absen wajib diisi.','warning');
+    return;
   }
+
+  if(mode==='BIDANG' && !payload.pesertaBidang){
+    toast('Pilih Bidang/Subbag peserta.','warning');
+    return;
+  }
+
+  if(mode==='PILIH' && !payload.pesertaIds.length){
+    toast('Pilih minimal satu pegawai.','warning');
+    return;
+  }
+
   const btn=$('saveActivityBtn');
-  await busyButton(btn, async()=>{
-    await api('admin_create_activity',payload);
-    toast('Kegiatan berhasil diaktifkan.','success');
+
+  await busyButton(btn,async()=>{
+    const result=await api('admin_create_activity',payload);
+
+    toast(
+      `Kegiatan tersimpan untuk ${result.jumlahPeserta || 0} peserta.`,
+      'success'
+    );
+
     $('actName').value='';
+    qsa('[data-activity-participant]').forEach(x=>x.checked=false);
+    updateActivityParticipantCount();
   },'Menyimpan...');
 }
 

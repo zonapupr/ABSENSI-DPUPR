@@ -306,3 +306,68 @@ textarea{min-height:92px;resize:vertical}
 @media(max-width:760px){
   .apel-admin-grid{grid-template-columns:1fr}
 }
+
+
+/* ===== V2.5 CORE FOCUS ===== */
+.main-menu-grid.core-focus.tplp-core{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+}
+.main-menu-grid.core-focus.asn-core{
+  grid-template-columns:minmax(0,180px);
+  justify-content:center;
+}
+
+.participant-section{
+  margin-top:14px;
+  padding-top:14px;
+  border-top:1px solid var(--line);
+}
+.participant-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:8px 0;
+  font-size:13px;
+  font-weight:800;
+}
+.btn.compact{
+  width:auto;
+  min-height:36px;
+  padding:8px 12px;
+}
+.participant-list{
+  max-height:320px;
+  overflow:auto;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#fff;
+}
+.participant-check{
+  display:flex;
+  gap:11px;
+  align-items:flex-start;
+  padding:11px 12px;
+  border-bottom:1px solid var(--line);
+  cursor:pointer;
+}
+.participant-check:last-child{border-bottom:0}
+.participant-check input{
+  margin-top:3px;
+  width:18px;
+  height:18px;
+}
+.participant-check span{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  min-width:0;
+}
+.participant-check b{
+  font-size:13px;
+  line-height:1.25;
+}
+.participant-check small{
+  color:var(--muted);
+  font-size:11px;
+}
