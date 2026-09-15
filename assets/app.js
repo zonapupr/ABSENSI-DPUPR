@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.1.0',
+  version: '2.2.2',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -131,7 +131,20 @@ function fmtTime(v){
 
 function fmtDate(v){
   if(!v) return '-';
-  return String(v).slice(0,10);
+
+  const raw = String(v).slice(0,10);
+  const parts = raw.split('-');
+  if(parts.length !== 3) return raw;
+
+  const [year, month, day] = parts;
+  const months = [
+    'Januari','Februari','Maret','April','Mei','Juni',
+    'Juli','Agustus','September','Oktober','November','Desember'
+  ];
+  const idx = Number(month) - 1;
+  if(idx < 0 || idx > 11) return raw;
+
+  return `${Number(day)} ${months[idx]} ${year}`;
 }
 
 async function login(){
@@ -231,29 +244,20 @@ async function navigate(route){
 
 async function renderHome(){
   page(skeletonPage());
+
   try{
     APP.home = await api('home');
+
     const d = APP.home || {};
     const server = d.server || {};
     const schedule = d.schedule || null;
     const att = d.attendance || {};
-    const idText = APP.user?.nip || APP.user?.idPegawai || '-';
+    const user = d.user || APP.user || {};
+    const isTplp = !!user.isTplp;
 
-    page(`
-      <div class="home-profile">
-        <div class="home-profile-avatar">${esc((APP.user?.nama || 'A').slice(0,1).toUpperCase())}</div>
-        <div class="home-profile-copy">
-          <div class="home-profile-name">${esc(APP.user?.nama || '-')}</div>
-          <div class="home-profile-id">${esc(idText)}</div>
-        </div>
-      </div>
+    APP.user = {...APP.user, ...user};
 
-      <div class="hero">
-        <div class="hero-day">${esc(server.day || '-')}</div>
-        <div class="hero-time">${esc(fmtTime(server.time))}</div>
-        <div class="hero-date">${esc(server.date || '-')}</div>
-      </div>
-
+    const regularCard = isTplp ? `
       <div class="card schedule-summary-card">
         <div class="card-title-row">
           <h2>${esc(schedule?.nama || 'Jadwal Hari Ini')}</h2>
@@ -263,23 +267,51 @@ async function renderHome(){
         ${schedule ? `
           <div class="schedule-main">
             <div>
-              <div class="muted small">Jadwal Reguler</div>
+              <div class="muted small">Jadwal Reguler TPLP</div>
               <div class="schedule-hours">${esc(fmtTime(schedule.jamMasuk))} - ${esc(fmtTime(schedule.jamPulang))}</div>
             </div>
-            <div class="schedule-date">${esc(server.day || '-')}<br>${esc(server.date || '-')}</div>
+            <div class="schedule-date">${esc(server.day || '-')}<br>${esc(fmtDate(server.date))}</div>
           </div>
 
           <div class="today-status-line">
             <div><span>Masuk</span><b>${att.masuk?.waktu ? esc(fmtTime(att.masuk.waktu)) : '-'}</b></div>
             <div><span>Pulang</span><b>${att.pulang?.waktu ? esc(fmtTime(att.pulang.waktu)) : '-'}</b></div>
           </div>
-        ` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal aktif hari ini.</div>`}
+        ` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal reguler TPLP hari ini.</div>`}
       </div>
+    ` : `
+      <div class="card">
+        <div class="card-title-row">
+          <h2>Absensi Kegiatan</h2>
+          <span class="badge info">ASN</span>
+        </div>
+        <div class="inline-note">
+          Absen harian ASN menggunakan sistem Kabupaten. Di aplikasi DPUPR, gunakan absensi kegiatan seperti Apel, Rapat, Diklat, dan Dinas.
+        </div>
+      </div>
+    `;
+
+    page(`
+      <div class="home-profile">
+        <div class="home-profile-avatar">${esc((user.nama || 'A').slice(0,1).toUpperCase())}</div>
+        <div class="home-profile-copy">
+          <div class="home-profile-name">${esc(user.nama || '-')}</div>
+          <div class="home-profile-id">${esc(user.bidang || '-')}</div>
+        </div>
+      </div>
+
+      <div class="hero">
+        <div class="hero-day">${esc(server.day || '-')}</div>
+        <div class="hero-time">${esc(fmtTime(server.time))}</div>
+        <div class="hero-date">${esc(fmtDate(server.date))}</div>
+      </div>
+
+      ${regularCard}
 
       <div class="main-menu-section">
         <div class="main-menu-title">Menu Utama</div>
-        <div class="main-menu-grid">
-          ${mainMenuTile('ABSEN','🗓️','Absen')}
+        <div class="main-menu-grid ${isTplp ? '' : 'asn-menu'}">
+          ${isTplp ? mainMenuTile('ABSEN','🗓️','Absen') : ''}
           ${mainMenuTile('APEL','👥','Apel')}
           ${mainMenuTile('IZIN','📄','Izin')}
           ${mainMenuTile('DINAS','💼','Dinas')}
@@ -292,6 +324,7 @@ async function renderHome(){
     qsa('[data-main-menu]').forEach(btn => {
       btn.addEventListener('click', () => openMainMenu(btn.dataset.mainMenu));
     });
+
   }catch(e){
     page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
   }
@@ -324,6 +357,12 @@ function openMainMenu(key){
 }
 
 function openRegularAttendanceMenu(){
+  const isTplp = !!(APP.home?.user?.isTplp ?? APP.user?.isTplp);
+  if(!isTplp){
+    toast('Absen harian hanya digunakan untuk TPLP.','warning');
+    return;
+  }
+
   const schedule = APP.home?.schedule;
   const att = APP.home?.attendance || {};
 
@@ -364,33 +403,60 @@ function confirmAttendance(type,ref,title){
 }
 
 function openActivityMenu(kind){
-  const list = (APP.home?.activeActivities || []).filter(x => normalizeActivityType(x) === kind);
+  const allToday = APP.home?.todayActivities || APP.home?.activeActivities || [];
+  const list = allToday.filter(x => normalizeActivityType(x) === kind);
   const label = kind.charAt(0) + kind.slice(1).toLowerCase();
 
   if(!list.length){
-    toast(`${label} belum diaktifkan oleh Admin.`, 'warning');
+    toast(`${label} belum dijadwalkan oleh Admin hari ini.`, 'warning');
     return;
   }
 
-  if(list.length === 1){
-    const x = list[0];
-    return confirmAttendance('KEGIATAN', x.idKegiatan, `${label}: ${x.nama}`);
+  const active = list.filter(x => x.statusWaktu === 'AKTIF' || !x.statusWaktu);
+
+  if(!active.length){
+    const upcoming = list.find(x => x.statusWaktu === 'BELUM_DIBUKA');
+    if(upcoming){
+      toast(`${label} belum dibuka. Waktu absen ${fmtTime(upcoming.jamMulai)} - ${fmtTime(upcoming.jamSelesai)}.`, 'warning', 4200);
+      return;
+    }
+
+    const finished = list.find(x => x.statusWaktu === 'SELESAI');
+    if(finished){
+      toast(`Batas absensi ${label} sudah berakhir pada ${fmtTime(finished.jamSelesai)}.`, 'warning', 4200);
+      return;
+    }
+
+    toast(`${label} belum dapat diabsen.`, 'warning');
+    return;
+  }
+
+  if(active.length === 1){
+    const x = active[0];
+    return confirmAttendance(
+      'KEGIATAN',
+      x.idKegiatan,
+      `${label}: ${x.nama}`
+    );
   }
 
   openModal(`
-    <div class="modal-head"><h2>Pilih ${esc(label)}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-head">
+      <h2>Pilih ${esc(label)}</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
     <div class="list">
-      ${list.map((x,i)=>`
+      ${active.map((x,i)=>`
         <button class="list-item activity-choice" type="button" data-activity-index="${i}">
           <div class="list-title">${esc(x.nama)}</div>
-          <div class="list-meta">${esc(x.jamMulai || '-')} - ${esc(x.jamSelesai || '-')}</div>
+          <div class="list-meta">Batas absen: ${esc(fmtTime(x.jamMulai))} - ${esc(fmtTime(x.jamSelesai))}</div>
         </button>`).join('')}
     </div>
   `);
 
   qsa('[data-activity-index]', $('modalRoot')).forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const x = list[Number(btn.dataset.activityIndex)];
+      const x = active[Number(btn.dataset.activityIndex)];
       closeModal();
       confirmAttendance('KEGIATAN', x.idKegiatan, `${label}: ${x.nama}`);
     });
@@ -664,11 +730,11 @@ function adminActivity(){
         </label>
         <label class="field"><span>Tanggal</span><input id="actDate" type="date"></label>
       </div>
-      <label class="field"><span>Nama Kegiatan</span><input id="actName" placeholder="Contoh: Apel pagi / Rapat evaluasi"></label>
+      <label class="field"><span>Nama Kegiatan</span><input id="actName" placeholder="Contoh: Apel Pagi / Apel Sore / Rapat Evaluasi"></label>
       <div class="form-grid">
         <label class="field"><span>Lokasi</span><select id="actLocation">${locOptions}</select></label>
-        <label class="field"><span>Jam Mulai</span><input id="actStart" type="time"></label>
-        <label class="field"><span>Jam Selesai</span><input id="actEnd" type="time"></label>
+        <label class="field"><span>Mulai Absen</span><input id="actStart" type="time"></label>
+        <label class="field"><span>Batas Absen</span><input id="actEnd" type="time"></label>
       </div>
       <button id="saveActivityBtn" class="btn primary block" type="button">Aktifkan Kegiatan</button>
     </div>`;
@@ -706,7 +772,7 @@ function adminEmployees(){
             <div class="list-top">
               <div>
                 <div class="list-title">${esc(x.nama)}</div>
-                <div class="list-meta">${esc(x.jabatan || '-')} • ${esc(x.bidang || '-')}</div>
+                <div class="list-meta">${esc(x.jabatan || '-')} • ${esc(x.bidang || '-')} • ${esc(x.jenisPegawai || (x.isTplp ? 'TPLP' : 'ASN'))}</div>
                 <div class="list-meta">ID/NIP: ${esc(x.nip || x.idPegawai)}</div>
               </div>
               <span class="badge info">${esc(x.role)}</span>
@@ -909,6 +975,7 @@ function renderAccount(){
       <div class="list">
         <div class="list-item"><div class="list-title">ID / NIP</div><div class="list-meta">${esc(u.nip || u.idPegawai || '-')}</div></div>
         <div class="list-item"><div class="list-title">Bidang</div><div class="list-meta">${esc(u.bidang || '-')}</div></div>
+        <div class="list-item"><div class="list-title">Jenis Pegawai</div><div class="list-meta">${esc(u.jenisPegawai || (u.isTplp ? 'TPLP' : 'ASN'))}</div></div>
         <div class="list-item"><div class="list-title">Role</div><div class="list-meta">${esc(u.role || '-')}</div></div>
       </div>
       ${roleIsAdmin() ? `<button id="openAdminBtn" class="btn secondary block" style="margin-top:14px" type="button">⚙ Panel Admin</button>` : ''}
