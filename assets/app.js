@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.0.2',
+  version: '2.1.0',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -92,7 +92,6 @@ function showLogin(){
 function showApp(){
   $('loginView').classList.add('hidden');
   $('appView').classList.remove('hidden');
-  $('adminNav').classList.toggle('hidden', !roleIsAdmin());
   $('headerAction').textContent = (APP.user?.nama || 'A').trim().slice(0,1).toUpperCase();
 }
 
@@ -225,7 +224,7 @@ async function navigate(route){
 
   if(route === 'home'){ setHeader('Beranda'); return renderHome(); }
   if(route === 'history'){ setHeader('Rekap'); return renderHistory(); }
-  if(route === 'leave'){ setHeader('Izin / Cuti'); return renderLeave(); }
+  if(route === 'leave'){ setHeader('Izin / Sakit'); return renderLeave(); }
   if(route === 'admin'){ setHeader('Admin'); return renderAdmin(); }
   if(route === 'account'){ setHeader('Akun'); return renderAccount(); }
 }
@@ -238,63 +237,199 @@ async function renderHome(){
     const server = d.server || {};
     const schedule = d.schedule || null;
     const att = d.attendance || {};
-    const acts = d.activeActivities || [];
-    const tasks = d.assignments || [];
-
-    let actions = '';
-    if(schedule){
-      if(!att.masuk){
-        actions += homeAction('MASUK','Absen Masuk','GPS + selfie','');
-      }else if(!att.pulang){
-        actions += homeAction('PULANG','Absen Pulang','GPS + selfie','');
-      }
-    }
-    acts.forEach(x => {
-      actions += homeAction('KEGIATAN',`Absen Kegiatan: ${esc(x.nama)}`,`${esc(x.jamMulai || '-')} - ${esc(x.jamSelesai || '-')}`,x.idKegiatan);
-    });
-    tasks.forEach(x => {
-      const label = x.jenisTugas === 'DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan';
-      actions += homeAction(x.jenisTugas,`${label}: ${esc(x.namaTugas)}`,x.modeLokasi === 'LOKASI_AKTUAL' ? 'Lokasi aktual' : 'Radius lokasi',x.idTugas);
-    });
+    const idText = APP.user?.nip || APP.user?.idPegawai || '-';
 
     page(`
+      <div class="home-profile">
+        <div class="home-profile-avatar">${esc((APP.user?.nama || 'A').slice(0,1).toUpperCase())}</div>
+        <div class="home-profile-copy">
+          <div class="home-profile-name">${esc(APP.user?.nama || '-')}</div>
+          <div class="home-profile-id">${esc(idText)}</div>
+        </div>
+      </div>
+
       <div class="hero">
         <div class="hero-day">${esc(server.day || '-')}</div>
         <div class="hero-time">${esc(fmtTime(server.time))}</div>
         <div class="hero-date">${esc(server.date || '-')}</div>
       </div>
 
-      <div class="card">
-        <div class="card-title-row"><h2>Jadwal Hari Ini</h2><span class="badge info">${schedule ? 'AKTIF' : 'BELUM ADA'}</span></div>
+      <div class="card schedule-summary-card">
+        <div class="card-title-row">
+          <h2>${esc(schedule?.nama || 'Jadwal Hari Ini')}</h2>
+          <span class="badge info">${schedule ? 'AKTIF' : 'BELUM ADA'}</span>
+        </div>
+
         ${schedule ? `
-          <div class="grid2">
-            <div class="stat"><div class="stat-label">Masuk</div><div class="stat-value">${esc(fmtTime(schedule.jamMasuk))}</div></div>
-            <div class="stat"><div class="stat-label">Pulang</div><div class="stat-value">${esc(fmtTime(schedule.jamPulang))}</div></div>
-          </div>` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal aktif hari ini.</div>`}
+          <div class="schedule-main">
+            <div>
+              <div class="muted small">Jadwal Reguler</div>
+              <div class="schedule-hours">${esc(fmtTime(schedule.jamMasuk))} - ${esc(fmtTime(schedule.jamPulang))}</div>
+            </div>
+            <div class="schedule-date">${esc(server.day || '-')}<br>${esc(server.date || '-')}</div>
+          </div>
+
+          <div class="today-status-line">
+            <div><span>Masuk</span><b>${att.masuk?.waktu ? esc(fmtTime(att.masuk.waktu)) : '-'}</b></div>
+            <div><span>Pulang</span><b>${att.pulang?.waktu ? esc(fmtTime(att.pulang.waktu)) : '-'}</b></div>
+          </div>
+        ` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal aktif hari ini.</div>`}
       </div>
 
-      <div class="card">
-        <div class="card-title-row"><h2>Status Hari Ini</h2></div>
-        <div class="grid2">
-          <div class="stat"><div class="stat-label">Masuk</div><div class="stat-value">${att.masuk?.waktu ? esc(fmtTime(att.masuk.waktu)) : '--:--'}</div></div>
-          <div class="stat"><div class="stat-label">Pulang</div><div class="stat-value">${att.pulang?.waktu ? esc(fmtTime(att.pulang.waktu)) : '--:--'}</div></div>
+      <div class="main-menu-section">
+        <div class="main-menu-title">Menu Utama</div>
+        <div class="main-menu-grid">
+          ${mainMenuTile('ABSEN','🗓️','Absen')}
+          ${mainMenuTile('APEL','👥','Apel')}
+          ${mainMenuTile('IZIN','📄','Izin')}
+          ${mainMenuTile('DINAS','💼','Dinas')}
+          ${mainMenuTile('RAPAT','📝','Rapat')}
+          ${mainMenuTile('DIKLAT','🎓','Diklat')}
         </div>
       </div>
-
-      ${actions ? `<div class="card"><div class="card-title-row"><h2>Aksi Hari Ini</h2></div>${actions}</div>` : ''}
     `);
+
+    qsa('[data-main-menu]').forEach(btn => {
+      btn.addEventListener('click', () => openMainMenu(btn.dataset.mainMenu));
+    });
   }catch(e){
     page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
   }
 }
 
-function homeAction(type,title,subtitle,ref){
+function mainMenuTile(key,icon,label){
   return `
-    <div class="action-card">
-      <h3>${title}</h3>
-      <div class="muted small">${subtitle}</div>
-      <button class="btn primary" type="button" onclick="openAttendance('${esc(type)}','${esc(ref || '')}','${esc(title)}')">Mulai</button>
-    </div>`;
+    <button class="main-menu-item" data-main-menu="${esc(key)}" type="button">
+      <span class="main-menu-icon">${icon}</span>
+      <span class="main-menu-label">${label}</span>
+    </button>`;
+}
+
+function normalizeActivityType(x){
+  const explicit = String(x?.jenisKegiatan || '').toUpperCase().trim();
+  if(['APEL','RAPAT','DIKLAT'].includes(explicit)) return explicit;
+
+  const name = String(x?.nama || '').toUpperCase();
+  if(name.includes('APEL')) return 'APEL';
+  if(name.includes('RAPAT')) return 'RAPAT';
+  if(name.includes('DIKLAT') || name.includes('PELATIHAN') || name.includes('BIMTEK')) return 'DIKLAT';
+  return 'KEGIATAN';
+}
+
+function openMainMenu(key){
+  if(key === 'ABSEN') return openRegularAttendanceMenu();
+  if(key === 'IZIN') return navigate('leave');
+  if(key === 'DINAS') return openAssignmentMenu();
+  if(['APEL','RAPAT','DIKLAT'].includes(key)) return openActivityMenu(key);
+}
+
+function openRegularAttendanceMenu(){
+  const schedule = APP.home?.schedule;
+  const att = APP.home?.attendance || {};
+
+  if(!schedule){
+    toast('Jadwal kerja hari ini belum tersedia.','warning');
+    return;
+  }
+
+  if(!att.masuk){
+    return confirmAttendance('MASUK','', 'Absen Masuk');
+  }
+
+  if(!att.pulang){
+    return confirmAttendance('PULANG','', 'Absen Pulang');
+  }
+
+  toast('Absen masuk dan pulang hari ini sudah lengkap.','success');
+}
+
+function confirmAttendance(type,ref,title){
+  openModal(`
+    <div class="confirm-box">
+      <div class="confirm-icon">ⓘ</div>
+      <h2>${esc(title)}</h2>
+      <p>Apakah Anda yakin akan melanjutkan ${esc(title.toLowerCase())}?</p>
+      <div class="form-actions">
+        <button id="confirmNoBtn" class="btn ghost" type="button">Tidak</button>
+        <button id="confirmYesBtn" class="btn primary" type="button">Ya</button>
+      </div>
+    </div>
+  `);
+
+  $('confirmNoBtn').addEventListener('click', closeModal);
+  $('confirmYesBtn').addEventListener('click', async()=>{
+    closeModal();
+    await openAttendance(type,ref,title);
+  });
+}
+
+function openActivityMenu(kind){
+  const list = (APP.home?.activeActivities || []).filter(x => normalizeActivityType(x) === kind);
+  const label = kind.charAt(0) + kind.slice(1).toLowerCase();
+
+  if(!list.length){
+    toast(`${label} belum diaktifkan oleh Admin.`, 'warning');
+    return;
+  }
+
+  if(list.length === 1){
+    const x = list[0];
+    return confirmAttendance('KEGIATAN', x.idKegiatan, `${label}: ${x.nama}`);
+  }
+
+  openModal(`
+    <div class="modal-head"><h2>Pilih ${esc(label)}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="list">
+      ${list.map((x,i)=>`
+        <button class="list-item activity-choice" type="button" data-activity-index="${i}">
+          <div class="list-title">${esc(x.nama)}</div>
+          <div class="list-meta">${esc(x.jamMulai || '-')} - ${esc(x.jamSelesai || '-')}</div>
+        </button>`).join('')}
+    </div>
+  `);
+
+  qsa('[data-activity-index]', $('modalRoot')).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const x = list[Number(btn.dataset.activityIndex)];
+      closeModal();
+      confirmAttendance('KEGIATAN', x.idKegiatan, `${label}: ${x.nama}`);
+    });
+  });
+}
+
+function openAssignmentMenu(){
+  const list = APP.home?.assignments || [];
+
+  if(!list.length){
+    toast('Tidak ada Dinas/Tugas Lapangan aktif untuk Anda.','warning');
+    return;
+  }
+
+  if(list.length === 1){
+    const x=list[0];
+    const title = x.jenisTugas === 'DINAS_LUAR' ? `Dinas: ${x.namaTugas}` : `Tugas Lapangan: ${x.namaTugas}`;
+    return confirmAttendance(x.jenisTugas,x.idTugas,title);
+  }
+
+  openModal(`
+    <div class="modal-head"><h2>Pilih Dinas / Tugas</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="list">
+      ${list.map((x,i)=>`
+        <button class="list-item activity-choice" type="button" data-task-index="${i}">
+          <div class="list-title">${esc(x.namaTugas)}</div>
+          <div class="list-meta">${esc(x.jenisTugas === 'DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan')}</div>
+        </button>`).join('')}
+    </div>
+  `);
+
+  qsa('[data-task-index]', $('modalRoot')).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const x=list[Number(btn.dataset.taskIndex)];
+      const title = x.jenisTugas === 'DINAS_LUAR' ? `Dinas: ${x.namaTugas}` : `Tugas Lapangan: ${x.namaTugas}`;
+      closeModal();
+      confirmAttendance(x.jenisTugas,x.idTugas,title);
+    });
+  });
 }
 
 async function renderHistory(){
@@ -313,12 +448,12 @@ async function renderHistory(){
 
 function historyRow(r){
   const st = String(r.status || '');
-  const cls = st.includes('TERLAMBAT') ? 'warning' : st.includes('DITOLAK') ? 'danger' : 'success';
+  const cls = (st.includes('TERLAMBAT') || st.includes('PULANG_CEPAT')) ? 'warning' : st.includes('DITOLAK') ? 'danger' : 'success';
   return `
     <div class="list-item">
       <div class="list-top">
         <div><div class="list-title">${esc(r.jenis || '-')}</div><div class="list-meta">${esc(fmtDate(r.tanggal))} • ${esc(fmtTime(r.waktu))}</div></div>
-        <span class="badge ${cls}">${esc(st || '-')}</span>
+        <span class="badge ${cls}">${esc((st || '-').replaceAll('_',' '))}</span>
       </div>
     </div>`;
 }
@@ -326,10 +461,10 @@ function historyRow(r){
 async function renderLeave(){
   page(`
     <div class="card">
-      <div class="card-title-row"><h2>Ajukan Izin / Sakit / Cuti</h2></div>
+      <div class="card-title-row"><h2>Ajukan Izin / Sakit</h2></div>
       <div class="form-grid">
         <label class="field"><span>Jenis</span>
-          <select id="leaveType"><option>IZIN</option><option>SAKIT</option><option>CUTI</option></select>
+          <select id="leaveType"><option>IZIN</option><option>SAKIT</option></select>
         </label>
         <label class="field"><span>Tanggal Mulai</span><input id="leaveStart" type="date"></label>
         <label class="field"><span>Tanggal Selesai</span><input id="leaveEnd" type="date"></label>
@@ -519,9 +654,18 @@ function adminActivity(){
   return `
     <div class="card">
       <div class="card-title-row"><h2>Buat Kegiatan</h2><span class="badge info">Dinamis</span></div>
-      <label class="field"><span>Nama Kegiatan</span><input id="actName" placeholder="Contoh: Apel malam"></label>
       <div class="form-grid">
+        <label class="field"><span>Jenis Kegiatan</span>
+          <select id="actType">
+            <option value="APEL">APEL</option>
+            <option value="RAPAT">RAPAT</option>
+            <option value="DIKLAT">DIKLAT</option>
+          </select>
+        </label>
         <label class="field"><span>Tanggal</span><input id="actDate" type="date"></label>
+      </div>
+      <label class="field"><span>Nama Kegiatan</span><input id="actName" placeholder="Contoh: Apel pagi / Rapat evaluasi"></label>
+      <div class="form-grid">
         <label class="field"><span>Lokasi</span><select id="actLocation">${locOptions}</select></label>
         <label class="field"><span>Jam Mulai</span><input id="actStart" type="time"></label>
         <label class="field"><span>Jam Selesai</span><input id="actEnd" type="time"></label>
@@ -700,6 +844,7 @@ async function saveSchedule(){
 
 async function saveActivity(){
   const payload={
+    jenisKegiatan:$('actType').value,
     nama:$('actName').value.trim(),tanggal:$('actDate').value,
     jamMulai:$('actStart').value,jamSelesai:$('actEnd').value,
     modeLokasi:'RADIUS',idLokasi:$('actLocation').value,wajibSelfie:true,aktif:true
@@ -766,8 +911,11 @@ function renderAccount(){
         <div class="list-item"><div class="list-title">Bidang</div><div class="list-meta">${esc(u.bidang || '-')}</div></div>
         <div class="list-item"><div class="list-title">Role</div><div class="list-meta">${esc(u.role || '-')}</div></div>
       </div>
-      <button id="logoutBtn" class="btn danger block" style="margin-top:14px" type="button">Keluar dari Aplikasi</button>
+      ${roleIsAdmin() ? `<button id="openAdminBtn" class="btn secondary block" style="margin-top:14px" type="button">⚙ Panel Admin</button>` : ''}
+      <button id="logoutBtn" class="btn danger block" style="margin-top:10px" type="button">Keluar dari Aplikasi</button>
     </div>`);
+
+  $('openAdminBtn')?.addEventListener('click', ()=>navigate('admin'));
   $('logoutBtn').addEventListener('click', logout);
 }
 
@@ -802,6 +950,11 @@ async function openAttendance(type,ref,title){
       <canvas id="attCanvas"></canvas>
       <img id="attPreview" class="hidden" alt="Selfie">
     </div>
+
+    <label class="field attendance-note">
+      <span>Keterangan (opsional)</span>
+      <textarea id="attNote" maxlength="300" placeholder="Boleh diisi, boleh dikosongkan"></textarea>
+    </label>
 
     <div class="form-actions">
       <button id="captureBtn" class="btn secondary" type="button">Ambil Selfie</button>
@@ -880,9 +1033,11 @@ async function submitAttendance(){
       idReferensi:APP.currentAttendance.ref,
       latitude:c.latitude,longitude:c.longitude,accuracy:c.accuracy,
       selfieDataUrl:APP.selfieData,
+      catatan:$('attNote')?.value?.trim() || '',
       deviceTime:new Date().toISOString(),userAgent:navigator.userAgent
     });
-    toast(`Absensi berhasil${data?.status ? ': '+data.status : ''}.`,'success');
+    const statusText = String(data?.status || '').replaceAll('_',' ');
+    toast(`Absensi berhasil${statusText ? ': '+statusText : ''}.`,'success');
     closeModal();
     await renderHome();
   },'Menyimpan...');
