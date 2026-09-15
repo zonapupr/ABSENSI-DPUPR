@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.5.0',
+  version: '2.6.2',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -9,6 +9,8 @@ const APP = {
   heroClockTimer: null,
   activitiesFetchedAt: 0,
   assignmentsFetchedAt: 0,
+  monthlyRecap: null,
+  recapMonth: '',
   route: 'home',
   adminTab: 'overview',
   cameraStream: null,
@@ -444,12 +446,21 @@ function paintHome(data){
         ${isTplp ? mainMenuTile('ABSEN','🗓️','Absen') : ''}
         ${isTplp ? mainMenuTile('APEL','👥','Apel') : ''}
         ${mainMenuTile('KEGIATAN','✅','Kegiatan')}
+        ${inactiveMenuTile('DINAS','💼','Dinas')}
+        ${inactiveMenuTile('IZIN','📄','Izin')}
+        ${inactiveMenuTile('DIKLAT','🎓','Diklat')}
       </div>
     </div>
   `);
 
   qsa('[data-main-menu]').forEach(btn=>{
     btn.addEventListener('click',()=>openMainMenu(btn.dataset.mainMenu));
+  });
+
+  qsa('[data-disabled-menu]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      toast('Fitur ini belum diaktifkan.','warning');
+    });
   });
 
   startLocalHeroClock(server.time);
@@ -489,6 +500,18 @@ function mainMenuTile(key,icon,label){
       <span class="main-menu-icon">${icon}</span>
       <span class="main-menu-label">${label}</span>
     </button>`;
+}
+
+function inactiveMenuTile(key,icon,label){
+  return `
+    <button class="main-menu-tile inactive" type="button"
+      data-disabled-menu="${esc(key)}"
+      aria-label="${esc(label)} belum aktif">
+      <span class="main-menu-icon">${icon}</span>
+      <span class="main-menu-label">${esc(label)}</span>
+      <span class="main-menu-badge">Belum Aktif</span>
+    </button>
+  `;
 }
 
 function normalizeActivityType(x){
@@ -830,17 +853,258 @@ async function openAssignmentMenu(){
   });
 }
 
+function currentRecapMonth(){
+  if(APP.recapMonth) return APP.recapMonth;
+
+  const serverDate=APP.home?.server?.date || '';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(serverDate)){
+    return serverDate.slice(0,7);
+  }
+
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+function fmtMonthYear(monthKey){
+  const months=[
+    'Januari','Februari','Maret','April','Mei','Juni',
+    'Juli','Agustus','September','Oktober','November','Desember'
+  ];
+
+  const m=String(monthKey || '').match(/^(\d{4})-(\d{2})$/);
+  if(!m) return monthKey || '-';
+
+  return `${months[Number(m[2])-1]} ${m[1]}`;
+}
+
+function recapMetric(label,value,sub,kind='blue'){
+  return `
+    <div class="recap-metric ${kind}">
+      <div class="recap-metric-label">${esc(label)}</div>
+      <div class="recap-metric-value">${esc(String(value ?? 0))}</div>
+      <div class="recap-metric-sub">${esc(sub || '')}</div>
+      <div class="recap-metric-bar"></div>
+    </div>
+  `;
+}
+
+function recapAction(icon,title,sub,key){
+  return `
+    <button class="recap-action" type="button" data-recap-detail="${esc(key)}">
+      <span class="recap-action-icon">${icon}</span>
+      <span class="recap-action-copy">
+        <b>${esc(title)}</b>
+        <small>${esc(sub)}</small>
+      </span>
+      <span class="recap-action-arrow">›</span>
+    </button>
+  `;
+}
+
 async function renderHistory(){
+  APP.recapMonth=currentRecapMonth();
   page(skeletonPage());
+  await loadMonthlyRecap(APP.recapMonth);
+}
+
+async function loadMonthlyRecap(monthKey){
+  APP.recapMonth=monthKey;
+
   try{
-    const rows = await api('history',{limit:100});
+    const data=await api(
+      'monthly_recap',
+      {month:monthKey},
+      {loading:'Memuat rekap...',timeout:45000}
+    );
+
+    APP.monthlyRecap=data;
+    paintMonthlyRecap(data);
+  }catch(e){
     page(`
       <div class="card">
-        <div class="card-title-row"><h2>Riwayat Absensi</h2><span class="badge">${rows.length} data</span></div>
-        ${rows.length ? `<div class="list">${rows.map(r => historyRow(r)).join('')}</div>` : empty('Belum ada riwayat absensi.')}
-      </div>`);
-  }catch(e){
-    page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
+        <div class="inline-note bad">${esc(e.message)}</div>
+        <button id="retryRecapBtn" class="btn primary block" type="button" style="margin-top:12px">
+          Coba Lagi
+        </button>
+      </div>
+    `);
+
+    $('retryRecapBtn')?.addEventListener('click',()=>{
+      loadMonthlyRecap(APP.recapMonth);
+    });
+  }
+}
+
+function paintMonthlyRecap(data){
+  const user=data?.user || APP.user || {};
+  const isTplp=!!user.isTplp;
+  const month=data?.month || APP.recapMonth;
+  const daily=data?.daily?.summary || {};
+  const apel=data?.apel?.summary || {};
+  const act=data?.activities?.summary || {};
+
+  const tplpSummary=isTplp ? `
+    <div class="recap-metrics-grid">
+      ${recapMetric('Hadir',daily.hadir || 0,`dari ${daily.hariKerja || 0} hari kerja`,'green')}
+      ${recapMetric('Tanpa Keterangan',daily.tanpaKeterangan || 0,'hari','red')}
+      ${recapMetric('Terlambat',daily.terlambat || 0,'kali','orange')}
+      ${recapMetric('Pulang Cepat',daily.pulangCepat || 0,'kali','yellow')}
+      ${recapMetric('Tidak Lengkap',daily.tidakLengkap || 0,'hari','blue')}
+    </div>
+  ` : `
+    <div class="recap-metrics-grid asn-recap-grid">
+      ${recapMetric('Kegiatan Wajib',act.wajib || 0,'kegiatan','blue')}
+      ${recapMetric('Hadir',act.hadir || 0,'kegiatan','green')}
+      ${recapMetric('Tidak Hadir',act.tidakHadir || 0,'kegiatan selesai','red')}
+    </div>
+  `;
+
+  const tplpActions=isTplp ? `
+    ${recapAction('🗓️','Rekap Absen Harian',`Hadir ${daily.hadir || 0} dari ${daily.hariKerja || 0} hari kerja`,'daily')}
+    ${recapAction('👥','Rekap Apel',`Hadir ${apel.hadir || 0} dari ${apel.wajib || 0} sesi`,'apel')}
+    ${recapAction('✅','Rekap Kegiatan',`Hadir ${act.hadir || 0} dari ${act.wajib || 0} kegiatan wajib`,'activities')}
+  ` : `
+    ${recapAction('✅','Rekap Kegiatan',`Hadir ${act.hadir || 0} dari ${act.wajib || 0} kegiatan wajib`,'activities')}
+  `;
+
+  page(`
+    <div class="recap-page-title">Rekap Saya</div>
+
+    <div class="card recap-summary-card">
+      <div class="recap-summary-head">
+        <div>
+          <div class="recap-summary-title">Rekap Absensi</div>
+          <div class="recap-summary-sub">${esc(isTplp ? 'TPLP' : 'ASN')} • ${esc(user.bidang || '-')}</div>
+        </div>
+
+        <label class="recap-month-picker">
+          <span>Bulan - Tahun</span>
+          <input id="recapMonthInput" type="month" value="${esc(month)}">
+        </label>
+      </div>
+
+      <div class="recap-month-label">${esc(fmtMonthYear(month))}</div>
+
+      ${tplpSummary}
+    </div>
+
+    <div class="recap-actions">
+      ${tplpActions}
+    </div>
+  `);
+
+  $('recapMonthInput')?.addEventListener('change',e=>{
+    const val=e.target.value;
+    if(val) loadMonthlyRecap(val);
+  });
+
+  qsa('[data-recap-detail]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      openRecapDetail(btn.dataset.recapDetail);
+    });
+  });
+}
+
+function recapStatusBadge(status){
+  const s=String(status || '').toUpperCase();
+
+  let cls='info';
+  if(['HADIR','TERLAMBAT','PULANG_CEPAT'].includes(s)) cls='success';
+  if(['TANPA_KETERANGAN','TIDAK_HADIR'].includes(s)) cls='danger';
+  if(['TIDAK_LENGKAP','MENUNGGU'].includes(s)) cls='warning';
+
+  return `<span class="badge ${cls}">${esc(s.replaceAll('_',' '))}</span>`;
+}
+
+function openRecapDetail(kind){
+  const data=APP.monthlyRecap || {};
+  const month=fmtMonthYear(data.month || APP.recapMonth);
+
+  if(kind==='daily'){
+    const rows=data.daily?.detail || [];
+
+    openModal(`
+      <div class="modal-head">
+        <h2>Rekap Absen Harian</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="list-meta recap-detail-month">${esc(month)}</div>
+
+      <div class="list recap-detail-list">
+        ${rows.length ? rows.map(r=>`
+          <div class="list-item">
+            <div class="list-top">
+              <div>
+                <div class="list-title">${esc(fmtDate(r.tanggal))}</div>
+                <div class="list-meta">
+                  Masuk ${esc(r.masuk || '-')} • Pulang ${esc(r.pulang || '-')}
+                </div>
+              </div>
+              ${recapStatusBadge(r.status)}
+            </div>
+          </div>
+        `).join('') : empty('Belum ada data rekap bulan ini.')}
+      </div>
+    `);
+    return;
+  }
+
+  if(kind==='apel'){
+    const rows=data.apel?.detail || [];
+
+    openModal(`
+      <div class="modal-head">
+        <h2>Rekap Apel</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="list-meta recap-detail-month">${esc(month)}</div>
+
+      <div class="list recap-detail-list">
+        ${rows.length ? rows.map(r=>`
+          <div class="list-item">
+            <div class="list-top">
+              <div>
+                <div class="list-title">${esc(r.nama || ('Apel '+r.jenis))}</div>
+                <div class="list-meta">
+                  ${esc(fmtDate(r.tanggal))} ${r.waktu ? `• ${esc(r.waktu)}` : ''}
+                </div>
+              </div>
+              ${recapStatusBadge(r.status)}
+            </div>
+          </div>
+        `).join('') : empty('Belum ada jadwal Apel pada bulan ini.')}
+      </div>
+    `);
+    return;
+  }
+
+  if(kind==='activities'){
+    const rows=data.activities?.detail || [];
+
+    openModal(`
+      <div class="modal-head">
+        <h2>Rekap Kegiatan</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="list-meta recap-detail-month">${esc(month)}</div>
+
+      <div class="list recap-detail-list">
+        ${rows.length ? rows.map(r=>`
+          <div class="list-item">
+            <div class="list-top">
+              <div>
+                <div class="list-title">${esc(r.nama || '-')}</div>
+                <div class="list-meta">
+                  ${esc(fmtDate(r.tanggal))} • ${esc(fmtTime(r.jamMulai))}-${esc(fmtTime(r.jamSelesai))}
+                  ${r.waktuAbsen ? ` • Absen ${esc(r.waktuAbsen)}` : ''}
+                </div>
+              </div>
+              ${recapStatusBadge(r.status)}
+            </div>
+          </div>
+        `).join('') : empty('Belum ada kegiatan wajib pada bulan ini.')}
+      </div>
+    `);
   }
 }
 
@@ -1813,7 +2077,7 @@ async function openAttendance(type,ref,title){
 
 async function startCamera(){
   try{
-    APP.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    APP.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480},height:{ideal:360}},audio:false});
     $('attVideo').srcObject=APP.cameraStream;
   }catch(e){
     toast('Kamera tidak dapat dibuka. Periksa izin kamera.','error');
@@ -1896,7 +2160,7 @@ function captureSelfie(){
     return;
   }
 
-  const maxWidth=640;
+  const maxWidth=360;
   const scale=Math.min(1,maxWidth/video.videoWidth);
 
   canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
@@ -1910,7 +2174,7 @@ function captureSelfie(){
     canvas.height
   );
 
-  APP.selfieData=canvas.toDataURL('image/jpeg',.62);
+  APP.selfieData=canvas.toDataURL('image/jpeg',.35);
 
   preview.src=APP.selfieData;
   preview.classList.remove('hidden');
