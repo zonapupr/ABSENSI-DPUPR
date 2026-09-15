@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.4.1',
+  version: '2.4.2',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -7,6 +7,8 @@ const APP = {
   home: null,
   homeFetchedAt: 0,
   heroClockTimer: null,
+  activitiesFetchedAt: 0,
+  assignmentsFetchedAt: 0,
   route: 'home',
   adminTab: 'overview',
   cameraStream: null,
@@ -80,7 +82,10 @@ function setGlobalLoading(active, text='Memproses...'){
 
 async function api(action, payload={}, options={}){
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), APP.timeout);
+  const timeoutMs =
+    options.timeout ||
+    (action === 'login' ? 35000 : 45000);
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
   if(options.loading) setGlobalLoading(true, options.loading);
 
   try{
@@ -199,33 +204,38 @@ async function login(){
   const old = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner"></span><span>Memproses...</span>`;
-  $('loginHint').textContent = 'Menghubungkan ke server...';
+  $('loginHint').textContent = 'Memeriksa akun...';
 
   try{
-    const data = await api('login',{
-      username,
-      pin,
-      deviceInfo:navigator.userAgent
-    });
+    const data = await api(
+      'login',
+      {
+        username,
+        pin,
+        deviceInfo:navigator.userAgent
+      },
+      {timeout:35000}
+    );
 
     APP.token = data.token;
     APP.user = data.user;
-    APP.home = data.home || null;
-    APP.homeFetchedAt = Date.now();
+    APP.home = null;
+    APP.homeFetchedAt = 0;
 
     localStorage.setItem('abs_token',APP.token);
 
+    // Begitu autentikasi sukses, langsung masuk aplikasi.
+    // Beranda diambil pada request terpisah agar login tidak timeout.
     showApp();
     setHeader('Beranda');
     setActiveNav('home');
-
-    if(APP.home){
-      paintHome(APP.home);
-    }else{
-      await renderHome(true);
-    }
+    page(skeletonPage());
 
     toast('Login berhasil.','success');
+
+    // Tidak menahan proses login.
+    renderHome(true);
+
   }catch(e){
     toast(e.message,'error');
     $('loginHint').textContent = e.message;
@@ -282,26 +292,41 @@ async function boot(){
     return;
   }
 
-  try{
-    // Satu request saja: Home sudah membawa profil pengguna.
-    APP.home = await api('home');
-    APP.homeFetchedAt = Date.now();
-    APP.user = APP.home?.user || null;
+  // Tampilkan shell aplikasi dulu supaya tidak terlihat blank.
+  showApp();
+  setHeader('Beranda');
+  setActiveNav('home');
+  page(skeletonPage());
+  clearTimeout(splashSlowTimer);
+  hideSplash();
 
-    showApp();
-    setHeader('Beranda');
-    setActiveNav('home');
+  try{
+    APP.home=await api('home',{}, {timeout:45000});
+    APP.homeFetchedAt=Date.now();
+    APP.user=APP.home?.user || APP.user;
     paintHome(APP.home);
-    clearTimeout(splashSlowTimer);
-    hideSplash();
-  }catch(_){
-    APP.token='';
-    APP.user=null;
-    APP.home=null;
-    localStorage.removeItem('abs_token');
-    showLogin();
-    clearTimeout(splashSlowTimer);
-    hideSplash();
+  }catch(e){
+    // Sesi invalid -> kembali ke login.
+    if(/sesi|akun tidak aktif|login/i.test(String(e.message || ''))){
+      APP.token='';
+      APP.user=null;
+      APP.home=null;
+      localStorage.removeItem('abs_token');
+      showLogin();
+      toast('Silakan login kembali.','warning');
+      return;
+    }
+
+    page(`
+      <div class="card">
+        <div class="inline-note bad">${esc(e.message)}</div>
+        <button id="retryHomeBtn" class="btn primary block" type="button" style="margin-top:12px">
+          Coba Lagi
+        </button>
+      </div>
+    `);
+
+    $('retryHomeBtn')?.addEventListener('click',()=>renderHome(true));
   }
 }
 
@@ -330,8 +355,7 @@ async function renderHome(force=false){
 
     if(freshEnough) return;
 
-    // Refresh senyap. Pengguna tidak menunggu spinner saat balik ke Beranda.
-    api('home')
+    api('home',{}, {timeout:45000})
       .then(data=>{
         APP.home=data;
         APP.homeFetchedAt=Date.now();
@@ -347,11 +371,19 @@ async function renderHome(force=false){
   page(skeletonPage());
 
   try{
-    APP.home=await api('home');
+    APP.home=await api('home',{}, {timeout:45000});
     APP.homeFetchedAt=Date.now();
     paintHome(APP.home);
   }catch(e){
-    page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
+    page(`
+      <div class="card">
+        <div class="inline-note bad">${esc(e.message)}</div>
+        <button id="retryHomeBtn" class="btn primary block" type="button" style="margin-top:12px">
+          Coba Lagi
+        </button>
+      </div>
+    `);
+    $('retryHomeBtn')?.addEventListener('click',()=>renderHome(true));
   }
 }
 
@@ -608,37 +640,78 @@ function openApelMenu(){
   });
 }
 
-function openActivityMenu(kind){
-  const allToday = APP.home?.todayActivities || APP.home?.activeActivities || [];
-  const list = allToday.filter(x => normalizeActivityType(x) === kind);
-  const label = kind.charAt(0) + kind.slice(1).toLowerCase();
+async function ensureActivitiesLoaded(){
+  const fresh =
+    APP.home?.todayActivities &&
+    (Date.now()-APP.activitiesFetchedAt < 60000);
+
+  if(fresh) return APP.home.todayActivities;
+
+  const rows=await api(
+    'today_activities',
+    {},
+    {loading:'Memuat kegiatan...',timeout:45000}
+  );
+
+  APP.home=APP.home || {};
+  APP.home.todayActivities=rows || [];
+  APP.home.activeActivities=(rows || []).filter(
+    x=>x.statusWaktu==='AKTIF' || !x.statusWaktu
+  );
+  APP.activitiesFetchedAt=Date.now();
+
+  return APP.home.todayActivities;
+}
+
+async function openActivityMenu(kind){
+  let allToday=[];
+
+  try{
+    allToday=await ensureActivitiesLoaded();
+  }catch(e){
+    toast(e.message,'error');
+    return;
+  }
+
+  const list=allToday.filter(x=>normalizeActivityType(x)===kind);
+  const label=kind.charAt(0)+kind.slice(1).toLowerCase();
 
   if(!list.length){
-    toast(`${label} belum dijadwalkan oleh Admin hari ini.`, 'warning');
+    toast(`${label} belum dijadwalkan oleh Admin hari ini.`,'warning');
     return;
   }
 
-  const active = list.filter(x => x.statusWaktu === 'AKTIF' || !x.statusWaktu);
+  const active=list.filter(
+    x=>x.statusWaktu==='AKTIF' || !x.statusWaktu
+  );
 
   if(!active.length){
-    const upcoming = list.find(x => x.statusWaktu === 'BELUM_DIBUKA');
+    const upcoming=list.find(x=>x.statusWaktu==='BELUM_DIBUKA');
     if(upcoming){
-      toast(`${label} belum dibuka. Waktu absen ${fmtTime(upcoming.jamMulai)} - ${fmtTime(upcoming.jamSelesai)}.`, 'warning', 4200);
+      toast(
+        `${label} belum dibuka. Waktu absen ${fmtTime(upcoming.jamMulai)} - ${fmtTime(upcoming.jamSelesai)}.`,
+        'warning',
+        4200
+      );
       return;
     }
 
-    const finished = list.find(x => x.statusWaktu === 'SELESAI');
+    const finished=list.find(x=>x.statusWaktu==='SELESAI');
     if(finished){
-      toast(`Batas absensi ${label} sudah berakhir pada ${fmtTime(finished.jamSelesai)}.`, 'warning', 4200);
+      toast(
+        `Batas absensi ${label} sudah berakhir pada ${fmtTime(finished.jamSelesai)}.`,
+        'warning',
+        4200
+      );
       return;
     }
 
-    toast(`${label} belum dapat diabsen.`, 'warning');
+    toast(`${label} belum dapat diabsen.`,'warning');
     return;
   }
 
-  if(active.length === 1){
-    const x = active[0];
+  if(active.length===1){
+    const x=active[0];
     return confirmAttendance(
       'KEGIATAN',
       x.idKegiatan,
@@ -660,46 +733,96 @@ function openActivityMenu(kind){
     </div>
   `);
 
-  qsa('[data-activity-index]', $('modalRoot')).forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const x = active[Number(btn.dataset.activityIndex)];
+  qsa('[data-activity-index]',$('modalRoot')).forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const x=active[Number(btn.dataset.activityIndex)];
       closeModal();
-      confirmAttendance('KEGIATAN', x.idKegiatan, `${label}: ${x.nama}`);
+      confirmAttendance(
+        'KEGIATAN',
+        x.idKegiatan,
+        `${label}: ${x.nama}`
+      );
     });
   });
 }
 
-function openAssignmentMenu(){
-  const list = APP.home?.assignments || [];
+async function ensureAssignmentsLoaded(){
+  const fresh =
+    APP.home?.assignments &&
+    (Date.now()-APP.assignmentsFetchedAt < 60000);
+
+  if(fresh) return APP.home.assignments;
+
+  const rows=await api(
+    'my_assignments',
+    {},
+    {loading:'Memuat dinas...',timeout:45000}
+  );
+
+  APP.home=APP.home || {};
+  APP.home.assignments=rows || [];
+  APP.assignmentsFetchedAt=Date.now();
+
+  return APP.home.assignments;
+}
+
+async function openAssignmentMenu(){
+  let list=[];
+
+  try{
+    list=await ensureAssignmentsLoaded();
+  }catch(e){
+    toast(e.message,'error');
+    return;
+  }
 
   if(!list.length){
     toast('Tidak ada Dinas/Tugas Lapangan aktif untuk Anda.','warning');
     return;
   }
 
-  if(list.length === 1){
+  if(list.length===1){
     const x=list[0];
-    const title = x.jenisTugas === 'DINAS_LUAR' ? `Dinas: ${x.namaTugas}` : `Tugas Lapangan: ${x.namaTugas}`;
-    return confirmAttendance(x.jenisTugas,x.idTugas,title);
+    const title=
+      x.jenisTugas==='DINAS_LUAR'
+        ? `Dinas: ${x.namaTugas}`
+        : `Tugas Lapangan: ${x.namaTugas}`;
+
+    return confirmAttendance(
+      x.jenisTugas,
+      x.idTugas,
+      title
+    );
   }
 
   openModal(`
-    <div class="modal-head"><h2>Pilih Dinas / Tugas</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-head">
+      <h2>Pilih Dinas / Tugas</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
     <div class="list">
       ${list.map((x,i)=>`
         <button class="list-item activity-choice" type="button" data-task-index="${i}">
           <div class="list-title">${esc(x.namaTugas)}</div>
-          <div class="list-meta">${esc(x.jenisTugas === 'DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan')}</div>
+          <div class="list-meta">${esc(x.jenisTugas==='DINAS_LUAR' ? 'Dinas Luar' : 'Tugas Lapangan')}</div>
         </button>`).join('')}
     </div>
   `);
 
-  qsa('[data-task-index]', $('modalRoot')).forEach(btn=>{
-    btn.addEventListener('click', ()=>{
+  qsa('[data-task-index]',$('modalRoot')).forEach(btn=>{
+    btn.addEventListener('click',()=>{
       const x=list[Number(btn.dataset.taskIndex)];
-      const title = x.jenisTugas === 'DINAS_LUAR' ? `Dinas: ${x.namaTugas}` : `Tugas Lapangan: ${x.namaTugas}`;
+      const title=
+        x.jenisTugas==='DINAS_LUAR'
+          ? `Dinas: ${x.namaTugas}`
+          : `Tugas Lapangan: ${x.namaTugas}`;
+
       closeModal();
-      confirmAttendance(x.jenisTugas,x.idTugas,title);
+      confirmAttendance(
+        x.jenisTugas,
+        x.idTugas,
+        title
+      );
     });
   });
 }
