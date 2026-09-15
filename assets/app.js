@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.4.0',
+  version: '2.4.1',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -107,12 +107,18 @@ async function api(action, payload={}, options={}){
 }
 
 function hideSplash(){
-  setTimeout(() => {
-    const s = $('splash');
-    if(!s) return;
+  const s=$('splash');
+  if(!s || s.dataset.hiding==='1') return;
+
+  s.dataset.hiding='1';
+
+  // Beri sedikit waktu agar transisi terasa seperti aplikasi native,
+  // tetapi jangan menghambat UI yang sudah siap.
+  setTimeout(()=>{
     s.style.opacity='0';
-    setTimeout(() => s.remove(), 260);
-  }, 220);
+    s.style.visibility='hidden';
+    setTimeout(()=>s.remove(),300);
+  },120);
 }
 
 function showLogin(){
@@ -241,7 +247,10 @@ async function logout(){
 }
 
 async function boot(){
-  hideSplash();
+  const splashSlowTimer=setTimeout(()=>{
+    const t=$('splashText');
+    if(t) t.textContent='Menghubungkan ke server...';
+  },2500);
 
   $('loginBtn').addEventListener('click',login);
   $('loginPin').addEventListener('keydown',e=>{
@@ -268,6 +277,8 @@ async function boot(){
 
   if(!APP.token){
     showLogin();
+    clearTimeout(splashSlowTimer);
+    hideSplash();
     return;
   }
 
@@ -281,12 +292,16 @@ async function boot(){
     setHeader('Beranda');
     setActiveNav('home');
     paintHome(APP.home);
+    clearTimeout(splashSlowTimer);
+    hideSplash();
   }catch(_){
     APP.token='';
     APP.user=null;
     APP.home=null;
     localStorage.removeItem('abs_token');
     showLogin();
+    clearTimeout(splashSlowTimer);
+    hideSplash();
   }
 }
 
@@ -378,9 +393,7 @@ function paintHome(data){
         <h2>Absensi Kegiatan</h2>
         <span class="badge info">ASN</span>
       </div>
-      <div class="inline-note">
-        Absen harian ASN menggunakan sistem Kabupaten. Di aplikasi DPUPR, gunakan absensi kegiatan seperti Apel, Rapat, Diklat, dan Dinas.
-      </div>
+
     </div>
   `;
 
