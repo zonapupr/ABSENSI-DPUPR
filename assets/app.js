@@ -1,10 +1,12 @@
 const APP = {
-  version: '2.3.0',
+  version: '2.4.0',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
   user: null,
   home: null,
+  homeFetchedAt: 0,
+  heroClockTimer: null,
   route: 'home',
   adminTab: 'overview',
   cameraStream: null,
@@ -181,6 +183,7 @@ function fmtDate(v){
 async function login(){
   const username = $('loginUser').value.trim();
   const pin = $('loginPin').value.trim();
+
   if(!username || !pin){
     toast('Username/ID/NIP dan PIN wajib diisi.','warning');
     return;
@@ -193,13 +196,30 @@ async function login(){
   $('loginHint').textContent = 'Menghubungkan ke server...';
 
   try{
-    const data = await api('login', {username, pin, deviceInfo:navigator.userAgent});
+    const data = await api('login',{
+      username,
+      pin,
+      deviceInfo:navigator.userAgent
+    });
+
     APP.token = data.token;
     APP.user = data.user;
-    localStorage.setItem('abs_token', APP.token);
+    APP.home = data.home || null;
+    APP.homeFetchedAt = Date.now();
+
+    localStorage.setItem('abs_token',APP.token);
+
     showApp();
+    setHeader('Beranda');
+    setActiveNav('home');
+
+    if(APP.home){
+      paintHome(APP.home);
+    }else{
+      await renderHome(true);
+    }
+
     toast('Login berhasil.','success');
-    await navigate('home');
   }catch(e){
     toast(e.message,'error');
     $('loginHint').textContent = e.message;
@@ -223,24 +243,28 @@ async function logout(){
 async function boot(){
   hideSplash();
 
-  $('loginBtn').addEventListener('click', login);
-  $('loginPin').addEventListener('keydown', e => { if(e.key==='Enter') login(); });
-  $('togglePinBtn').addEventListener('click', () => {
-    const i = $('loginPin');
-    i.type = i.type === 'password' ? 'text' : 'password';
+  $('loginBtn').addEventListener('click',login);
+  $('loginPin').addEventListener('keydown',e=>{
+    if(e.key==='Enter') login();
   });
 
-  $('headerAction').addEventListener('click', () => navigate('account'));
-  $('bottomNav').addEventListener('click', e => {
-    const b = e.target.closest('[data-route]');
+  $('togglePinBtn').addEventListener('click',()=>{
+    const i=$('loginPin');
+    i.type=i.type==='password' ? 'text' : 'password';
+  });
+
+  $('headerAction').addEventListener('click',()=>navigate('account'));
+
+  $('bottomNav').addEventListener('click',e=>{
+    const b=e.target.closest('[data-route]');
     if(b) navigate(b.dataset.route);
   });
 
-  document.addEventListener('pointerdown', e => {
-    const b = e.target.closest('button,.btn');
+  document.addEventListener('pointerdown',e=>{
+    const b=e.target.closest('button,.btn');
     if(!b || b.disabled) return;
     try{ navigator.vibrate?.(8); }catch(_){}
-  }, {passive:true});
+  },{passive:true});
 
   if(!APP.token){
     showLogin();
@@ -248,11 +272,19 @@ async function boot(){
   }
 
   try{
-    APP.user = await api('me');
+    // Satu request saja: Home sudah membawa profil pengguna.
+    APP.home = await api('home');
+    APP.homeFetchedAt = Date.now();
+    APP.user = APP.home?.user || null;
+
     showApp();
-    await navigate('home');
+    setHeader('Beranda');
+    setActiveNav('home');
+    paintHome(APP.home);
   }catch(_){
     APP.token='';
+    APP.user=null;
+    APP.home=null;
     localStorage.removeItem('abs_token');
     showLogin();
   }
@@ -266,99 +298,155 @@ async function navigate(route){
   APP.route = route;
   setActiveNav(route);
 
-  if(route === 'home'){ setHeader('Beranda'); return renderHome(); }
+  if(route === 'home'){ setHeader('Beranda'); return renderHome(false); }
   if(route === 'history'){ setHeader('Rekap'); return renderHistory(); }
   if(route === 'leave'){ setHeader('Izin / Sakit'); return renderLeave(); }
   if(route === 'admin'){ setHeader('Admin'); return renderAdmin(); }
   if(route === 'account'){ setHeader('Akun'); return renderAccount(); }
 }
 
-async function renderHome(){
+async function renderHome(force=false){
+  const freshEnough =
+    APP.home &&
+    (Date.now()-APP.homeFetchedAt < 30000);
+
+  if(APP.home && !force){
+    paintHome(APP.home);
+
+    if(freshEnough) return;
+
+    // Refresh senyap. Pengguna tidak menunggu spinner saat balik ke Beranda.
+    api('home')
+      .then(data=>{
+        APP.home=data;
+        APP.homeFetchedAt=Date.now();
+        APP.user={...APP.user,...(data?.user||{})};
+
+        if(APP.route==='home') paintHome(APP.home);
+      })
+      .catch(()=>{});
+
+    return;
+  }
+
   page(skeletonPage());
 
   try{
-    APP.home = await api('home');
-
-    const d = APP.home || {};
-    const server = d.server || {};
-    const schedule = d.schedule || null;
-    const att = d.attendance || {};
-    const user = d.user || APP.user || {};
-    const isTplp = !!user.isTplp;
-
-    APP.user = {...APP.user, ...user};
-
-    const regularCard = isTplp ? `
-      <div class="card schedule-summary-card">
-        <div class="card-title-row">
-          <h2>${esc(schedule?.nama || 'Jadwal Hari Ini')}</h2>
-          <span class="badge info">${schedule ? 'AKTIF' : 'BELUM ADA'}</span>
-        </div>
-
-        ${schedule ? `
-          <div class="schedule-main">
-            <div>
-              <div class="muted small">Jadwal Reguler TPLP</div>
-              <div class="schedule-hours">${esc(fmtTime(schedule.jamMasuk))} - ${esc(fmtTime(schedule.jamPulang))}</div>
-            </div>
-            <div class="schedule-date">${esc(server.day || '-')}<br>${esc(fmtDate(server.date))}</div>
-          </div>
-
-          <div class="today-status-line">
-            <div><span>Masuk</span><b>${att.masuk?.waktu ? esc(fmtTime(att.masuk.waktu)) : '-'}</b></div>
-            <div><span>Pulang</span><b>${att.pulang?.waktu ? esc(fmtTime(att.pulang.waktu)) : '-'}</b></div>
-          </div>
-        ` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal reguler TPLP hari ini.</div>`}
-      </div>
-    ` : `
-      <div class="card">
-        <div class="card-title-row">
-          <h2>Absensi Kegiatan</h2>
-          <span class="badge info">ASN</span>
-        </div>
-        <div class="inline-note">
-          Absen harian ASN menggunakan sistem Kabupaten. Di aplikasi DPUPR, gunakan absensi kegiatan seperti Apel, Rapat, Diklat, dan Dinas.
-        </div>
-      </div>
-    `;
-
-    page(`
-      <div class="home-profile">
-        <div class="home-profile-avatar">${esc((user.nama || 'A').slice(0,1).toUpperCase())}</div>
-        <div class="home-profile-copy">
-          <div class="home-profile-name">${esc(user.nama || '-')}</div>
-          <div class="home-profile-id">${esc(user.bidang || '-')}</div>
-        </div>
-      </div>
-
-      <div class="hero">
-        <div class="hero-day">${esc(server.day || '-')}</div>
-        <div class="hero-time">${esc(fmtTime(server.time))}</div>
-        <div class="hero-date">${esc(fmtDate(server.date))}</div>
-      </div>
-
-      ${regularCard}
-
-      <div class="main-menu-section">
-        <div class="main-menu-title">Menu Utama</div>
-        <div class="main-menu-grid ${isTplp ? '' : 'asn-menu'}">
-          ${isTplp ? mainMenuTile('ABSEN','🗓️','Absen') : ''}
-          ${mainMenuTile('APEL','👥','Apel')}
-          ${mainMenuTile('IZIN','📄','Izin')}
-          ${mainMenuTile('DINAS','💼','Dinas')}
-          ${mainMenuTile('RAPAT','📝','Rapat')}
-          ${mainMenuTile('DIKLAT','🎓','Diklat')}
-        </div>
-      </div>
-    `);
-
-    qsa('[data-main-menu]').forEach(btn => {
-      btn.addEventListener('click', () => openMainMenu(btn.dataset.mainMenu));
-    });
-
+    APP.home=await api('home');
+    APP.homeFetchedAt=Date.now();
+    paintHome(APP.home);
   }catch(e){
     page(`<div class="card"><div class="inline-note bad">${esc(e.message)}</div></div>`);
   }
+}
+
+function paintHome(data){
+  const d=data || {};
+  const server=d.server || {};
+  const schedule=d.schedule || null;
+  const att=d.attendance || {};
+  const user=d.user || APP.user || {};
+  const isTplp=!!user.isTplp;
+
+  APP.user={...APP.user,...user};
+
+  const regularCard=isTplp ? `
+    <div class="card schedule-summary-card">
+      <div class="card-title-row">
+        <h2>${esc(schedule?.nama || 'Jadwal Hari Ini')}</h2>
+        <span class="badge info">${schedule ? 'AKTIF' : 'BELUM ADA'}</span>
+      </div>
+
+      ${schedule ? `
+        <div class="schedule-main">
+          <div>
+            <div class="muted small">Jadwal Reguler TPLP</div>
+            <div class="schedule-hours">${esc(fmtTime(schedule.jamMasuk))} - ${esc(fmtTime(schedule.jamPulang))}</div>
+          </div>
+          <div class="schedule-date">${esc(server.day || '-')}<br>${esc(fmtDate(server.date))}</div>
+        </div>
+
+        <div class="today-status-line">
+          <div><span>Masuk</span><b>${att.masuk?.waktu ? esc(fmtTime(att.masuk.waktu)) : '-'}</b></div>
+          <div><span>Pulang</span><b>${att.pulang?.waktu ? esc(fmtTime(att.pulang.waktu)) : '-'}</b></div>
+        </div>
+      ` : `<div class="empty-state"><div class="empty-icon">◷</div>Belum ada jadwal reguler TPLP hari ini.</div>`}
+    </div>
+  ` : `
+    <div class="card">
+      <div class="card-title-row">
+        <h2>Absensi Kegiatan</h2>
+        <span class="badge info">ASN</span>
+      </div>
+      <div class="inline-note">
+        Absen harian ASN menggunakan sistem Kabupaten. Di aplikasi DPUPR, gunakan absensi kegiatan seperti Apel, Rapat, Diklat, dan Dinas.
+      </div>
+    </div>
+  `;
+
+  page(`
+    <div class="home-profile">
+      <div class="home-profile-avatar">${esc((user.nama || 'A').slice(0,1).toUpperCase())}</div>
+      <div class="home-profile-copy">
+        <div class="home-profile-name">${esc(user.nama || '-')}</div>
+        <div class="home-profile-id">${esc(user.bidang || '-')}</div>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="hero-day">${esc(server.day || '-')}</div>
+      <div class="hero-time" id="liveHeroClock">${esc(fmtTime(server.time))}</div>
+      <div class="hero-date">${esc(fmtDate(server.date))}</div>
+    </div>
+
+    ${regularCard}
+
+    <div class="main-menu-section">
+      <div class="main-menu-title">Menu Utama</div>
+      <div class="main-menu-grid ${isTplp ? '' : 'asn-menu'}">
+        ${isTplp ? mainMenuTile('ABSEN','🗓️','Absen') : ''}
+        ${mainMenuTile('APEL','👥','Apel')}
+        ${mainMenuTile('IZIN','📄','Izin')}
+        ${mainMenuTile('DINAS','💼','Dinas')}
+        ${mainMenuTile('RAPAT','📝','Rapat')}
+        ${mainMenuTile('DIKLAT','🎓','Diklat')}
+      </div>
+    </div>
+  `);
+
+  qsa('[data-main-menu]').forEach(btn=>{
+    btn.addEventListener('click',()=>openMainMenu(btn.dataset.mainMenu));
+  });
+
+  startLocalHeroClock(server.time);
+}
+
+function startLocalHeroClock(serverTime){
+  clearInterval(APP.heroClockTimer);
+
+  const parts=String(serverTime||'').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if(!parts) return;
+
+  const baseSeconds=
+    Number(parts[1])*3600+
+    Number(parts[2])*60+
+    Number(parts[3]||0);
+
+  const started=Date.now();
+
+  const tick=()=>{
+    const el=$('liveHeroClock');
+    if(!el || APP.route!=='home') return;
+
+    const elapsed=Math.floor((Date.now()-started)/1000);
+    const total=(baseSeconds+elapsed)%86400;
+    const hh=String(Math.floor(total/3600)).padStart(2,'0');
+    const mm=String(Math.floor((total%3600)/60)).padStart(2,'0');
+    el.textContent=`${hh}:${mm}`;
+  };
+
+  tick();
+  APP.heroClockTimer=setInterval(tick,1000);
 }
 
 function mainMenuTile(key,icon,label){
@@ -1427,7 +1515,7 @@ async function openAttendance(type,ref,title){
 
 async function startCamera(){
   try{
-    APP.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+    APP.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
     $('attVideo').srcObject=APP.cameraStream;
   }catch(e){
     toast('Kamera tidak dapat dibuka. Periksa izin kamera.','error');
@@ -1443,30 +1531,89 @@ function stopCamera(){
 
 async function getAttendanceLocation(){
   if(!navigator.geolocation){
-    $('attGpsStatus').textContent='Tidak didukung'; return;
+    $('attGpsStatus').textContent='Tidak didukung';
+    return;
   }
+
+  const statusEl=$('attGpsStatus');
+  const accEl=$('attGpsAccuracy');
+
+  let best=null;
+  let watchId=null;
+  let timer=null;
+  let settled=false;
+
+  const finish=(err)=>{
+    if(settled) return;
+    settled=true;
+
+    if(watchId!==null) navigator.geolocation.clearWatch(watchId);
+    if(timer) clearTimeout(timer);
+
+    if(best){
+      APP.currentCoords=best.coords;
+      statusEl.textContent='Ditemukan';
+      accEl.textContent=`±${Math.round(best.coords.accuracy)} m`;
+      updateAttendReady();
+      return;
+    }
+
+    statusEl.textContent='Gagal';
+    accEl.textContent='-';
+    toast(err?.message || 'GPS tidak dapat dibaca.','error');
+  };
+
   try{
-    const pos=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{
-      enableHighAccuracy:true,maximumAge:0,timeout:15000
-    }));
-    APP.currentCoords=pos.coords;
-    $('attGpsStatus').textContent='Ditemukan';
-    $('attGpsAccuracy').textContent=`±${Math.round(pos.coords.accuracy)} m`;
-    updateAttendReady();
+    watchId=navigator.geolocation.watchPosition(pos=>{
+      if(!best || pos.coords.accuracy < best.coords.accuracy){
+        best=pos;
+        APP.currentCoords=pos.coords;
+        statusEl.textContent='Mencari titik terbaik...';
+        accEl.textContent=`±${Math.round(pos.coords.accuracy)} m`;
+        updateAttendReady();
+      }
+
+      if(pos.coords.accuracy<=30){
+        finish();
+      }
+    },err=>finish(err),{
+      enableHighAccuracy:true,
+      maximumAge:5000,
+      timeout:8000
+    });
+
+    timer=setTimeout(()=>finish(),7000);
   }catch(e){
-    $('attGpsStatus').textContent='Gagal';
-    $('attGpsAccuracy').textContent='-';
-    toast('GPS tidak dapat dibaca.','error');
+    finish(e);
   }
 }
 
 function captureSelfie(){
-  const video=$('attVideo'), canvas=$('attCanvas'), preview=$('attPreview');
-  if(!video?.videoWidth){toast('Tunggu kamera siap.','warning');return;}
-  canvas.width=720;
-  canvas.height=Math.round(720*video.videoHeight/video.videoWidth);
-  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-  APP.selfieData=canvas.toDataURL('image/jpeg',.72);
+  const video=$('attVideo');
+  const canvas=$('attCanvas');
+  const preview=$('attPreview');
+
+  if(!video?.videoWidth){
+    toast('Tunggu kamera siap.','warning');
+    return;
+  }
+
+  const maxWidth=640;
+  const scale=Math.min(1,maxWidth/video.videoWidth);
+
+  canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
+  canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+
+  canvas.getContext('2d').drawImage(
+    video,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  APP.selfieData=canvas.toDataURL('image/jpeg',.62);
+
   preview.src=APP.selfieData;
   preview.classList.remove('hidden');
   video.classList.add('hidden');
@@ -1479,26 +1626,88 @@ function updateAttendReady(){
   if(btn) btn.disabled=!(APP.currentCoords && APP.selfieData);
 }
 
+function applyAttendanceToHome(data){
+  if(!APP.home || !data) return;
+
+  const type=String(
+    data.type ||
+    APP.currentAttendance?.type ||
+    ''
+  ).toUpperCase();
+
+  const item={
+    waktu:data.waktu || '',
+    status:data.status || ''
+  };
+
+  if(type==='MASUK'){
+    APP.home.attendance=APP.home.attendance || {};
+    APP.home.attendance.masuk=item;
+  }
+
+  if(type==='PULANG'){
+    APP.home.attendance=APP.home.attendance || {};
+    APP.home.attendance.pulang=item;
+  }
+
+  if(type==='APEL_PAGI' || type==='APEL_SORE'){
+    const wanted=type==='APEL_SORE' ? 'SORE' : 'PAGI';
+    const row=(APP.home.apel || []).find(
+      x=>String(x.jenisApel).toUpperCase()===wanted
+    );
+
+    if(row){
+      row.status='SUDAH_ABSEN';
+      row.sudahAbsen=true;
+    }
+  }
+
+  if(data.deviceRegisteredNow && APP.home.user){
+    APP.home.user.deviceRegistered=true;
+    APP.user={...APP.user,deviceRegistered:true};
+  }
+
+  APP.homeFetchedAt=Date.now();
+}
+
 async function submitAttendance(){
   const c=APP.currentCoords;
-  if(!c || !APP.selfieData){toast('GPS dan selfie wajib siap.','warning');return;}
+
+  if(!c || !APP.selfieData){
+    toast('GPS dan selfie wajib siap.','warning');
+    return;
+  }
+
   const btn=$('submitAttendBtn');
 
-  await busyButton(btn, async()=>{
+  await busyButton(btn,async()=>{
     const data=await api('attend',{
       jenisAbsen:APP.currentAttendance.type,
       idReferensi:APP.currentAttendance.ref,
-      latitude:c.latitude,longitude:c.longitude,accuracy:c.accuracy,
+      latitude:c.latitude,
+      longitude:c.longitude,
+      accuracy:c.accuracy,
       selfieDataUrl:APP.selfieData,
       catatan:$('attNote')?.value?.trim() || '',
       deviceId:DEVICE.id,
       deviceKey:DEVICE.key,
-      deviceTime:new Date().toISOString(),userAgent:navigator.userAgent
+      deviceTime:new Date().toISOString(),
+      userAgent:navigator.userAgent
     });
-    const statusText = String(data?.status || '').replaceAll('_',' ');
-    toast(`Absensi berhasil${statusText ? ': '+statusText : ''}.`,'success');
+
+    const statusText=String(data?.status || '').replaceAll('_',' ');
+
+    applyAttendanceToHome(data);
     closeModal();
-    await renderHome();
+
+    if(APP.route==='home' && APP.home){
+      paintHome(APP.home);
+    }
+
+    toast(
+      `Absensi berhasil${statusText ? ': '+statusText : ''}.`,
+      'success'
+    );
   },'Menyimpan...');
 }
 
