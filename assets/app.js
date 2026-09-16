@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.7.1',
+  version: '2.8.0',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -18,6 +18,8 @@ const APP = {
   currentCoords: null,
   currentLocationCheck: null,
   selfieData: '',
+  installPrompt: null,
+  installDismissed: sessionStorage.getItem('abs_install_dismissed') === '1',
   busyCount: 0,
   adminData: {
     dashboard:null,
@@ -399,6 +401,71 @@ async function logout(){
   toast('Anda sudah keluar.');
 }
 
+
+function isStandaloneApp(){
+  return (
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true
+  );
+}
+
+function installBannerHtml(){
+  if(
+    !APP.installPrompt ||
+    APP.installDismissed ||
+    isStandaloneApp()
+  ) return '';
+
+  return `
+    <div class="install-app-banner" id="installAppBanner">
+      <div class="install-app-copy">
+        <b>Pasang Absen DPUPR</b>
+        <span>Buka lebih cepat dari layar utama HP.</span>
+      </div>
+      <div class="install-app-actions">
+        <button id="dismissInstallBtn" class="btn ghost compact" type="button">Nanti</button>
+        <button id="installAppBtn" class="btn primary compact" type="button">Pasang</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindInstallBanner(){
+  $('installAppBtn')?.addEventListener('click', async()=>{
+    const promptEvent=APP.installPrompt;
+    if(!promptEvent) return;
+
+    try{
+      promptEvent.prompt();
+      await promptEvent.userChoice;
+    }catch(_){}
+
+    APP.installPrompt=null;
+    document.getElementById('installAppBanner')?.remove();
+  });
+
+  $('dismissInstallBtn')?.addEventListener('click',()=>{
+    APP.installDismissed=true;
+    sessionStorage.setItem('abs_install_dismissed','1');
+    document.getElementById('installAppBanner')?.remove();
+  });
+}
+
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault();
+  APP.installPrompt=e;
+
+  if(APP.route==='home' && APP.home && !APP.installDismissed){
+    paintHome(APP.home);
+  }
+});
+
+window.addEventListener('appinstalled', ()=>{
+  APP.installPrompt=null;
+  APP.installDismissed=true;
+  document.getElementById('installAppBanner')?.remove();
+});
+
 async function boot(){
   const splashSlowTimer=setTimeout(()=>{
     const t=$('splashText');
@@ -581,6 +648,8 @@ function paintHome(data){
 
     ${regularCard}
 
+    ${installBannerHtml()}
+
     <div class="main-menu-section">
       <div class="main-menu-title">Menu Utama</div>
       <div class="main-menu-grid core-focus ${isTplp ? 'tplp-core' : 'asn-core'}">
@@ -604,6 +673,7 @@ function paintHome(data){
     });
   });
 
+  bindInstallBanner();
   startLocalHeroClock(server.time);
 }
 
@@ -1427,6 +1497,12 @@ function adminLocation(){
       </div>
 
       <button id="saveLocationBtn" class="btn primary block" type="button">Simpan Lokasi & Radius</button>
+      <button id="refreshLocationCacheBtn" class="btn ghost block" type="button" style="margin-top:8px">
+        ↻ Refresh Data Lokasi dari Sheet
+      </button>
+      <div class="muted small" style="margin-top:7px">
+        Gunakan tombol ini jika radius/koordinat diubah langsung dari Google Sheet.
+      </div>
     </div>`;
 }
 
@@ -1728,7 +1804,8 @@ function activityEmployeeChecklist(){
 
 function adminActivity(){
   const locOptions=(APP.adminData.locations || [])
-    .map(x=>`<option value="${esc(x.id)}">${esc(x.nama)}</option>`)
+    .filter(x=>String(x.status || 'AKTIF').toUpperCase()!=='NONAKTIF')
+    .map(x=>`<option value="${esc(x.id)}">${esc(x.nama)} • radius ${esc(x.radius || '-')} m</option>`)
     .join('');
 
   return `
@@ -1750,8 +1827,11 @@ function adminActivity(){
         </label>
 
         <label class="field">
-          <span>Lokasi</span>
-          <select id="actLocation">${locOptions}</select>
+          <span>Sumber Lokasi</span>
+          <select id="actLocationMode">
+            <option value="TERSIMPAN">Pilih Lokasi Tersimpan</option>
+            <option value="AKTUAL">Ambil Lokasi Saya Sekarang</option>
+          </select>
         </label>
 
         <label class="field">
@@ -1763,6 +1843,48 @@ function adminActivity(){
           <span>Batas Absen</span>
           <input id="actEnd" type="time">
         </label>
+      </div>
+
+      <div id="actSavedLocationWrap">
+        <label class="field">
+          <span>Lokasi Kegiatan</span>
+          <select id="actLocation">
+            <option value="">-- pilih lokasi --</option>
+            ${locOptions}
+          </select>
+        </label>
+      </div>
+
+      <div id="actCurrentLocationWrap" class="hidden activity-current-location">
+        <button id="actCaptureGpsBtn" class="btn yellow block" type="button">
+          📍 Ambil Lokasi Saya Sekarang
+        </button>
+
+        <div id="actGpsStatus" class="inline-note">
+          Belum ada titik kegiatan.
+        </div>
+
+        <div class="form-grid activity-form-grid">
+          <label class="field">
+            <span>Latitude</span>
+            <input id="actLatitude" inputmode="decimal" readonly>
+          </label>
+
+          <label class="field">
+            <span>Longitude</span>
+            <input id="actLongitude" inputmode="decimal" readonly>
+          </label>
+
+          <label class="field">
+            <span>Radius Absensi (m)</span>
+            <input id="actRadius" type="number" min="10" value="100">
+          </label>
+
+          <label class="field">
+            <span>Batas Akurasi GPS (m)</span>
+            <input id="actAccuracy" type="number" min="5" value="30">
+          </label>
+        </div>
       </div>
 
       <div class="participant-section">
@@ -1845,7 +1967,7 @@ function adminEmployees(){
                 <div class="list-title">${esc(x.nama)}</div>
                 <div class="list-meta">${esc(x.jabatan || '-')} • ${esc(x.bidang || '-')} • ${esc(x.jenisPegawai || (x.isTplp ? 'TPLP' : 'ASN'))}</div>
                 <div class="list-meta">ID/NIP: ${esc(x.nip || x.idPegawai)}</div>
-                <div class="list-meta">Perangkat Absen: ${x.deviceRegistered ? 'TERDAFTAR' : 'BELUM TERDAFTAR'}</div>
+                <div class="list-meta">Perangkat Absen: ${x.deviceRegistered ? 'TERDAFTAR' : 'MENUNGGU AKTIVASI'}</div>
               </div>
               <span class="badge info">${esc(x.role)}</span>
             </div>
@@ -1860,6 +1982,7 @@ function bindAdminPanel(){
   if(APP.adminTab==='location'){
     $('getLocationBtn')?.addEventListener('click', getAdminLocation);
     $('saveLocationBtn')?.addEventListener('click', saveAdminLocation);
+    $('refreshLocationCacheBtn')?.addEventListener('click', refreshLocationCache);
   }
   if(APP.adminTab==='schedule'){
     $('schedulePicker')?.addEventListener('change', loadScheduleForm);
@@ -1873,12 +1996,15 @@ function bindAdminPanel(){
   }
   if(APP.adminTab==='activity'){
     $('saveActivityBtn')?.addEventListener('click', saveActivity);
+    $('actLocationMode')?.addEventListener('change', updateActivityLocationUi);
+    $('actCaptureGpsBtn')?.addEventListener('click', captureActivityGps);
     $('actParticipantMode')?.addEventListener('change', updateActivityParticipantUi);
     $('actParticipantSearch')?.addEventListener('input', filterActivityParticipants);
     $('actSelectAllVisible')?.addEventListener('click', selectVisibleActivityParticipants);
     qsa('[data-activity-participant]').forEach(x=>{
       x.addEventListener('change', updateActivityParticipantCount);
     });
+    updateActivityLocationUi();
     updateActivityParticipantUi();
     updateActivityParticipantCount();
   }
@@ -1954,6 +2080,29 @@ async function saveAdminLocation(){
   },'Menyimpan...');
 }
 
+
+async function refreshLocationCache(){
+  const btn=$('refreshLocationCacheBtn');
+
+  await busyButton(btn, async()=>{
+    const locations=await api(
+      'admin_refresh_location_cache',
+      {},
+      {timeout:30000}
+    );
+
+    APP.adminData.locations=locations || [];
+
+    // Paksa Home/Kegiatan membaca aturan lokasi terbaru pada pemakaian berikutnya.
+    APP.home=null;
+    APP.homeFetchedAt=0;
+    APP.activitiesFetchedAt=0;
+
+    toast('Data lokasi terbaru sudah dibaca dari Sheet.','success');
+    renderAdminPanel();
+  },'Memperbarui...');
+}
+
 function loadScheduleForm(){
   const v=$('schedulePicker').value;
   if(v===''){
@@ -1993,6 +2142,44 @@ async function saveSchedule(){
   },'Menyimpan...');
 }
 
+
+function updateActivityLocationUi(){
+  const mode=$('actLocationMode')?.value || 'TERSIMPAN';
+  $('actSavedLocationWrap')?.classList.toggle('hidden',mode!=='TERSIMPAN');
+  $('actCurrentLocationWrap')?.classList.toggle('hidden',mode!=='AKTUAL');
+}
+
+async function captureActivityGps(){
+  const btn=$('actCaptureGpsBtn');
+  const status=$('actGpsStatus');
+
+  if(!btn || !status) return;
+
+  btn.disabled=true;
+  btn.innerHTML='<span class="spinner dark"></span>Mencari GPS...';
+  status.className='inline-note';
+  status.textContent='Mencari titik GPS terbaik...';
+
+  try{
+    const coords=await getBestAttendancePosition();
+
+    $('actLatitude').value=Number(coords.latitude).toFixed(7);
+    $('actLongitude').value=Number(coords.longitude).toFixed(7);
+
+    status.className='inline-note good';
+    status.textContent=`Lokasi siap • akurasi ±${Math.round(Number(coords.accuracy)||0)} m`;
+
+    toast('Titik kegiatan berhasil diambil.','success');
+  }catch(e){
+    status.className='inline-note bad';
+    status.textContent=e.message || 'Lokasi tidak dapat diambil.';
+    toast(status.textContent,'error');
+  }finally{
+    btn.disabled=false;
+    btn.textContent='📍 Ambil Lokasi Saya Sekarang';
+  }
+}
+
 function updateActivityParticipantUi(){
   const mode=$('actParticipantMode')?.value || 'SEMUA';
   $('actBidangWrap')?.classList.toggle('hidden',mode!=='BIDANG');
@@ -2029,13 +2216,19 @@ function selectVisibleActivityParticipants(){
 
 async function saveActivity(){
   const mode=$('actParticipantMode').value;
+  const locationMode=$('actLocationMode')?.value || 'TERSIMPAN';
 
   const payload={
     nama:$('actName').value.trim(),
     tanggal:$('actDate').value,
     jamMulai:$('actStart').value,
     jamSelesai:$('actEnd').value,
-    idLokasi:$('actLocation').value,
+    locationMode,
+    idLokasi:locationMode==='TERSIMPAN' ? $('actLocation').value : '',
+    latitude:locationMode==='AKTUAL' ? $('actLatitude').value : '',
+    longitude:locationMode==='AKTUAL' ? $('actLongitude').value : '',
+    radiusMeter:locationMode==='AKTUAL' ? $('actRadius').value : '',
+    batasAkurasiMeter:locationMode==='AKTUAL' ? $('actAccuracy').value : '',
     wajibSelfie:true,
     aktif:true,
     pesertaMode:mode,
@@ -2045,6 +2238,27 @@ async function saveActivity(){
 
   if(!payload.nama || !payload.tanggal || !payload.jamMulai || !payload.jamSelesai){
     toast('Nama, tanggal, mulai absen, dan batas absen wajib diisi.','warning');
+    return;
+  }
+
+  if(locationMode==='TERSIMPAN' && !payload.idLokasi){
+    toast('Pilih lokasi kegiatan.','warning');
+    return;
+  }
+
+  if(
+    locationMode==='AKTUAL' &&
+    (!payload.latitude || !payload.longitude)
+  ){
+    toast('Ambil lokasi kegiatan terlebih dahulu.','warning');
+    return;
+  }
+
+  if(
+    locationMode==='AKTUAL' &&
+    Number(payload.radiusMeter)<=0
+  ){
+    toast('Radius kegiatan harus lebih dari 0 meter.','warning');
     return;
   }
 
@@ -2069,6 +2283,12 @@ async function saveActivity(){
     );
 
     $('actName').value='';
+    if($('actLatitude')) $('actLatitude').value='';
+    if($('actLongitude')) $('actLongitude').value='';
+    if($('actGpsStatus')){
+      $('actGpsStatus').className='inline-note';
+      $('actGpsStatus').textContent='Belum ada titik kegiatan.';
+    }
     qsa('[data-activity-participant]').forEach(x=>x.checked=false);
     updateActivityParticipantCount();
   },'Menyimpan...');
@@ -2344,32 +2564,41 @@ function renderAttendanceLocationBlocked(check){
       ? 'Akurasi GPS belum cukup'
       : 'Lokasi belum dapat digunakan';
 
-  const message=outside
-    ? 'Anda berada di luar radius lokasi absensi.'
-    : accuracyBad
-      ? 'GPS belum cukup akurat. Coba lagi di area yang lebih terbuka.'
-      : 'Lokasi belum dapat diverifikasi.';
+  const distanceText=Number.isFinite(Number(check.distance))
+    ? formatMeters(check.distance)
+    : '-';
 
-  const details=[
-    check.locationName ? `Lokasi: ${check.locationName}` : '',
-    Number.isFinite(Number(check.distance))
-      ? `Jarak: ${formatMeters(check.distance)}`
-      : '',
-    Number.isFinite(Number(check.radius))
-      ? `Radius: ${formatMeters(check.radius)}`
-      : '',
-    `Akurasi GPS: ±${Math.round(Number(check.accuracy)||0)} m`
-  ].filter(Boolean);
+  const radiusText=Number.isFinite(Number(check.radius))
+    ? formatMeters(check.radius)
+    : '-';
 
   openModal(`
-    <div class="attendance-flow attendance-blocked">
+    <div class="attendance-flow attendance-blocked compact-warning">
       <div class="attendance-warning-icon">ⓘ</div>
       <h2>${esc(title)}</h2>
-      <p>${esc(message)}</p>
 
-      <div class="attendance-warning-details">
-        ${details.map(x=>`<span>${esc(x)}</span>`).join('')}
-      </div>
+      ${outside ? `
+        <div class="radius-warning-main">
+          <div>
+            <span>Jarak</span>
+            <b>${esc(distanceText)}</b>
+          </div>
+          <div class="radius-warning-divider"></div>
+          <div>
+            <span>Batas</span>
+            <b>${esc(radiusText)}</b>
+          </div>
+        </div>
+        <div class="radius-warning-location">
+          ${esc(check.locationName || 'Lokasi absensi')} • Akurasi ±${Math.round(Number(check.accuracy)||0)} m
+        </div>
+      ` : `
+        <p>GPS belum cukup akurat. Coba lagi di area yang lebih terbuka.</p>
+        <div class="radius-warning-location">
+          Akurasi ±${Math.round(Number(check.accuracy)||0)} m
+          ${Number.isFinite(Number(check.accuracyLimit)) ? ` • Batas ±${Math.round(Number(check.accuracyLimit))} m` : ''}
+        </div>
+      `}
 
       <div class="form-actions attendance-block-actions">
         <button id="closeLocationBlockBtn" class="btn ghost" type="button">Tutup</button>

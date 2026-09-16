@@ -1059,3 +1059,150 @@ textarea{min-height:92px;resize:vertical}
   }
 }
 
+
+
+/* ===== V2.8.0 PENYEMPURNAAN 7 POIN ===== */
+
+/* 1. Logo header sedikit lebih besar, background lebih tipis */
+.header-brand-logos{
+  width:clamp(132px,39vw,182px);
+  max-height:25px;
+  padding:1px 3px;
+  border-radius:6px;
+  box-shadow:none;
+}
+
+/* 2. Warning radius lebih ringkas & angka utama lebih jelas */
+.attendance-blocked.compact-warning{
+  padding:10px 2px 2px;
+}
+.attendance-blocked.compact-warning .attendance-warning-icon{
+  width:54px;
+  height:54px;
+  margin:0 auto 10px;
+  font-size:30px;
+  border-width:3px;
+}
+.attendance-blocked.compact-warning h2{
+  font-size:23px;
+  margin-bottom:11px;
+}
+.radius-warning-main{
+  display:grid;
+  grid-template-columns:1fr 1px 1fr;
+  align-items:center;
+  gap:13px;
+  padding:13px 14px;
+  border-radius:16px;
+  background:#fff3f3;
+}
+.radius-warning-main>div:not(.radius-warning-divider){
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+}
+.radius-warning-main span{
+  color:#7a8796;
+  font-size:11px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+.radius-warning-main b{
+  color:#c93434;
+  font-size:25px;
+  line-height:1;
+}
+.radius-warning-divider{
+  width:1px;
+  height:38px;
+  background:#e5caca;
+}
+.radius-warning-location{
+  margin:8px 0 12px;
+  padding:8px 10px;
+  border-radius:12px;
+  background:#f5f8fb;
+  color:#52687d;
+  font-size:12px;
+  font-weight:750;
+}
+
+/* 4. Lokasi kegiatan */
+.activity-current-location{
+  padding:9px;
+  margin:7px 0 9px;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#f8fbff;
+}
+
+/* 5. Banner instal PWA: lokal, tanpa request GAS */
+.install-app-banner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:9px 0 11px;
+  padding:10px 11px;
+  border-radius:15px;
+  background:#eef6ff;
+  border:1px solid #d5e8ff;
+}
+.install-app-copy{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.install-app-copy b{
+  font-size:13px;
+  color:#153c67;
+}
+.install-app-copy span{
+  color:#66809b;
+  font-size:10px;
+}
+.install-app-actions{
+  display:flex;
+  gap:6px;
+  flex:0 0 auto;
+}
+.install-app-actions .btn.compact{
+  min-height:34px;
+  padding:7px 10px;
+  font-size:11px;
+}
+
+/* 7. Tombol selfie mengambang di tengah-bawah */
+.attendance-sticky-actions{
+  position:sticky;
+  bottom:7px;
+  z-index:8;
+  width:min(94%,520px);
+  margin:8px auto 0;
+  padding:7px;
+  border-radius:19px;
+  background:rgba(255,255,255,.94);
+  box-shadow:0 10px 28px rgba(17,45,76,.18);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+}
+.attendance-sticky-actions .btn{
+  border-radius:14px;
+}
+
+@media(max-width:640px){
+  .header-brand-logos{
+    width:clamp(138px,41vw,178px);
+  }
+  .install-app-banner{
+    padding:9px;
+  }
+  .install-app-copy span{
+    display:none;
+  }
+  .attendance-sticky-actions{
+    width:96%;
+  }
+}
