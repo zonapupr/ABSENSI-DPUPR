@@ -780,3 +780,282 @@ textarea{min-height:92px;resize:vertical}
     display:none;
   }
 }
+
+
+/* ===== V2.7.1 MOBILE LAYOUT & POLISH ===== */
+
+/* Login: horizontal 4-logo strip and tighter card */
+.login-brand-logos{
+  width:min(100%,350px);
+  margin:0 auto 10px;
+  padding:5px 8px;
+  border-radius:14px;
+}
+.login-brand-logos img{
+  width:100%;
+  height:auto;
+}
+.login-card{
+  padding:25px 28px;
+}
+.login-card h1{
+  margin:14px 0 18px;
+  font-size:31px;
+  line-height:1.05;
+}
+.login-card .field{
+  margin:10px 0;
+}
+.login-card .field>span{
+  margin-bottom:6px;
+}
+.login-card input{
+  padding:12px 14px;
+}
+.login-card .btn.xl{
+  min-height:50px;
+  margin-top:8px;
+}
+.login-hint{
+  margin-top:10px;
+}
+
+/* Header: 4 logos small beside Beranda; no extra server/network call */
+.header-copy{
+  min-width:0;
+  flex:1;
+  padding-right:10px;
+}
+.header-title-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+.header-brand-logos{
+  display:block;
+  width:clamp(118px,36vw,165px);
+  height:auto;
+  max-height:23px;
+  object-fit:contain;
+  background:#fff;
+  border-radius:7px;
+  padding:2px 4px;
+}
+.header-title{
+  flex:0 0 auto;
+}
+
+/* Home: denser first screen */
+.home-profile{
+  gap:10px;
+  margin:0 2px 9px;
+  padding:0 2px;
+}
+.home-profile-avatar{
+  width:46px;
+  height:46px;
+  font-size:19px;
+}
+.home-profile-name{
+  font-size:17px;
+}
+.home-profile-id{
+  margin-top:2px;
+  font-size:12px;
+}
+.hero{
+  border-radius:22px;
+  padding:15px 18px;
+  margin-bottom:11px;
+}
+.hero-time{
+  font-size:38px;
+  margin:5px 0;
+}
+.hero-date{
+  font-size:13px;
+}
+.schedule-summary-card{
+  padding:14px 16px 12px;
+  margin-bottom:11px;
+}
+.schedule-summary-card .card-title-row{
+  margin-bottom:7px;
+}
+.schedule-summary-card h2{
+  font-size:17px;
+}
+.schedule-main{
+  padding:0 0 9px;
+  gap:10px;
+}
+.schedule-hours{
+  font-size:20px;
+  margin-top:2px;
+}
+.schedule-date{
+  font-size:11px;
+}
+.today-status-line{
+  padding-top:8px;
+  gap:10px;
+  font-size:13px;
+}
+.main-menu-section{
+  margin:10px 0 4px;
+}
+.main-menu-title{
+  font-size:18px;
+  margin:0 2px 9px;
+}
+.main-menu-grid.core-focus.tplp-core,
+.main-menu-grid.core-focus.asn-core{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:9px 10px;
+}
+.main-menu-item{
+  gap:5px;
+}
+.main-menu-icon{
+  width:68px;
+  height:68px;
+  border-radius:18px;
+  font-size:29px;
+}
+.main-menu-label{
+  font-size:12px;
+}
+.main-menu-item.inactive{
+  position:relative;
+  opacity:.58;
+  filter:saturate(.72);
+}
+.main-menu-badge{
+  margin-top:-2px;
+  padding:2px 5px;
+  font-size:8px;
+}
+.page-root{
+  padding-bottom:96px;
+}
+
+/* Admin Kegiatan: keep comfortable taps, remove wasteful vertical gaps */
+.admin-activity-card{
+  padding:16px;
+}
+.admin-activity-card .card-title-row{
+  margin-bottom:9px;
+}
+.admin-activity-card .field{
+  margin:8px 0;
+}
+.admin-activity-card .field>span{
+  margin-bottom:5px;
+}
+.admin-activity-card input,
+.admin-activity-card select{
+  padding:11px 12px;
+  border-radius:14px;
+  min-height:45px;
+}
+.admin-activity-card .activity-form-grid{
+  gap:7px 9px;
+}
+.admin-activity-card .participant-section{
+  margin-top:10px;
+  padding-top:10px;
+}
+.admin-activity-card #saveActivityBtn{
+  margin-top:10px;
+}
+
+/* Selfie: bigger visual frame, but keep upload max 360px quality .35 */
+.camera-wrap.attendance-camera-wrap{
+  height:clamp(300px,40dvh,340px);
+  background:#10263d;
+}
+.attendance-camera-wrap video,
+.attendance-camera-wrap img{
+  object-fit:contain;
+  object-position:center center;
+  background:#10263d;
+}
+.attendance-location-strip{
+  padding:7px 10px;
+  margin-bottom:7px;
+}
+.attendance-compact-head{
+  margin-bottom:6px;
+}
+.attendance-note.compact{
+  margin-top:7px;
+}
+.attendance-note.compact input{
+  min-height:41px;
+  padding:8px 11px;
+}
+.attendance-sticky-actions{
+  margin-top:7px;
+}
+.attendance-sticky-actions .btn{
+  min-height:44px;
+}
+
+@media(max-width:640px){
+  .login-screen{
+    padding:18px;
+  }
+  .login-card{
+    padding:22px 20px;
+    border-radius:24px;
+  }
+  .login-card h1{
+    font-size:29px;
+  }
+
+  .app-shell{
+    padding-top:70px;
+  }
+  .app-header{
+    height:70px;
+    padding-left:15px;
+    padding-right:15px;
+  }
+  .header-kicker{
+    font-size:10px;
+  }
+  .header-title{
+    font-size:19px;
+  }
+  .avatar-btn{
+    width:38px;
+    height:38px;
+  }
+
+  .page-root{
+    padding:11px 13px 96px;
+  }
+
+  .admin-activity-card .activity-form-grid{
+    grid-template-columns:1fr 1fr;
+  }
+
+  .attendance-modal-panel{
+    padding:12px;
+    max-height:96dvh;
+  }
+  .camera-wrap.attendance-camera-wrap{
+    height:clamp(285px,39dvh,330px);
+  }
+}
+
+@media(max-height:680px){
+  .camera-wrap.attendance-camera-wrap{
+    height:270px;
+  }
+  .attendance-note.compact span{
+    display:none;
+  }
+}
+

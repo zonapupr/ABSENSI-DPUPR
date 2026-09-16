@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.7.0',
+  version: '2.7.1',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -144,6 +144,7 @@ function showApp(){
 
 function setHeader(title){
   $('headerTitle').textContent = title;
+  $('headerBrandLogos')?.classList.toggle('hidden', title !== 'Beranda');
 }
 
 function setActiveNav(route){
@@ -644,7 +645,7 @@ function mainMenuTile(key,icon,label){
 
 function inactiveMenuTile(key,icon,label){
   return `
-    <button class="main-menu-tile inactive" type="button"
+    <button class="main-menu-item inactive" type="button"
       data-disabled-menu="${esc(key)}"
       aria-label="${esc(label)} belum aktif">
       <span class="main-menu-icon">${icon}</span>
@@ -1731,7 +1732,7 @@ function adminActivity(){
     .join('');
 
   return `
-    <div class="card">
+    <div class="card admin-activity-card">
       <div class="card-title-row">
         <h2>Buat Kegiatan</h2>
         <span class="badge info">Peserta Wajib</span>
@@ -1742,7 +1743,7 @@ function adminActivity(){
         <input id="actName" placeholder="Contoh: Rapat Evaluasi / Gotong Royong / Sosialisasi">
       </label>
 
-      <div class="form-grid">
+      <div class="form-grid activity-form-grid">
         <label class="field">
           <span>Tanggal</span>
           <input id="actDate" type="date">
