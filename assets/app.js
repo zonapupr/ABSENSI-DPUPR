@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.8.0',
+  version: '2.8.2',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -1146,6 +1146,61 @@ async function loadMonthlyRecap(monthKey){
   }
 }
 
+
+function saveBase64Download(file){
+  if(!file?.base64 || !file?.fileName){
+    throw new Error('File download tidak tersedia.');
+  }
+
+  const binary=atob(file.base64);
+  const bytes=new Uint8Array(binary.length);
+
+  for(let i=0;i<binary.length;i++){
+    bytes[i]=binary.charCodeAt(i);
+  }
+
+  const blob=new Blob(
+    [bytes],
+    {type:file.mimeType || 'application/octet-stream'}
+  );
+
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+
+  a.href=url;
+  a.download=file.fileName;
+  a.style.display='none';
+
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+async function downloadMonthlyRecap(format){
+  const month=APP.monthlyRecap?.month || APP.recapMonth;
+  const label=String(format).toUpperCase();
+
+  const btn=$(label==='PDF' ? 'downloadRecapPdfBtn' : 'downloadRecapExcelBtn');
+
+  await busyButton(btn,async()=>{
+    const file=await api(
+      'download_monthly_recap',
+      {
+        month,
+        format:label==='PDF' ? 'pdf' : 'xlsx'
+      },
+      {
+        timeout:60000
+      }
+    );
+
+    saveBase64Download(file);
+    toast(`Rekap pribadi ${label} berhasil dibuat.`,'success');
+  },'Membuat file...');
+}
+
 function paintMonthlyRecap(data){
   const user=data?.user || APP.user || {};
   const isTplp=!!user.isTplp;
@@ -1199,6 +1254,21 @@ function paintMonthlyRecap(data){
       ${tplpSummary}
     </div>
 
+    <div class="recap-download-card">
+      <div class="recap-download-copy">
+        <b>Download Rekap Pribadi</b>
+        <span>Hanya berisi data absensi akun Anda.</span>
+      </div>
+      <div class="recap-download-actions">
+        <button id="downloadRecapExcelBtn" class="btn recap-download-excel" type="button">
+          Excel
+        </button>
+        <button id="downloadRecapPdfBtn" class="btn recap-download-pdf" type="button">
+          PDF
+        </button>
+      </div>
+    </div>
+
     <div class="recap-actions">
       ${tplpActions}
     </div>
@@ -1213,6 +1283,14 @@ function paintMonthlyRecap(data){
     btn.addEventListener('click',()=>{
       openRecapDetail(btn.dataset.recapDetail);
     });
+  });
+
+  $('downloadRecapExcelBtn')?.addEventListener('click',()=>{
+    downloadMonthlyRecap('XLSX');
+  });
+
+  $('downloadRecapPdfBtn')?.addEventListener('click',()=>{
+    downloadMonthlyRecap('PDF');
   });
 }
 

@@ -1206,3 +1206,64 @@ textarea{min-height:92px;resize:vertical}
     width:96%;
   }
 }
+
+
+/* ===== V2.8.1 DOWNLOAD REKAP ===== */
+.recap-download-card{
+  margin-top:14px;
+  padding:13px 14px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border-radius:18px;
+  background:#fff;
+  box-shadow:var(--shadow);
+}
+.recap-download-copy{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+}
+.recap-download-copy b{
+  color:var(--text);
+  font-size:14px;
+}
+.recap-download-copy span{
+  color:var(--muted);
+  font-size:10px;
+}
+.recap-download-actions{
+  display:flex;
+  gap:8px;
+  flex:0 0 auto;
+}
+.recap-download-actions .btn{
+  width:auto;
+  min-width:75px;
+  min-height:40px;
+  padding:9px 13px;
+  border-radius:13px;
+  font-size:12px;
+}
+.recap-download-excel{
+  background:#168b55;
+  color:#fff;
+}
+.recap-download-pdf{
+  background:#cf3b3b;
+  color:#fff;
+}
+@media(max-width:520px){
+  .recap-download-card{
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .recap-download-actions{
+    width:100%;
+  }
+  .recap-download-actions .btn{
+    flex:1;
+  }
+}
