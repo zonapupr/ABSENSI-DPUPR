@@ -7,6 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Absensi DPUPR KSB</title>
+  <link rel="preload" as="image" href="/assets/brand-logos.webp">
 
   <style>
     html,body{margin:0;min-height:100%;background:#eef4fb}
@@ -18,11 +19,12 @@
       color:#fff;font-family:Arial,sans-serif;
       transition:opacity .28s ease,visibility .28s ease;
     }
-    #splash .splash-logo{
-      background:#ffd600;color:#12345c;font-size:22px;font-weight:900;
-      padding:15px 25px;border-radius:18px;letter-spacing:.03em;
-      box-shadow:0 12px 30px rgba(0,0,0,.15);
+
+    #splash .splash-brand{
+      width:min(82vw,330px);background:#fff;border-radius:20px;padding:8px 12px;
+      box-shadow:0 12px 30px rgba(0,0,0,.15);box-sizing:border-box;
     }
+    #splash .splash-brand img{display:block;width:100%;height:auto}
     #splash .splash-title{font-size:24px;font-weight:800;text-align:center}
     #splash .splash-text{font-size:14px;opacity:.86;text-align:center}
     #splash .splash-spinner{
@@ -34,12 +36,12 @@
     }
     @keyframes splashSpin{to{transform:rotate(360deg)}}
   </style>
-  <link rel="manifest" href="/manifest.json?v=241">
-  <link rel="stylesheet" href="/assets/style.css?v=262">
+  <link rel="manifest" href="/manifest.json?v=270">
+  <link rel="stylesheet" href="/assets/style.css?v=270">
 </head>
 <body>
   <div id="splash" class="splash" aria-live="polite">
-    <div class="splash-logo">DPUPR</div>
+    <div class="splash-brand"><img src="/assets/brand-logos.webp" width="720" height="250" alt="Identitas Pemerintah Kabupaten Sumbawa Barat, PUPR, BerAKHLAK, dan Bangga Melayani Bangsa"></div>
     <div class="splash-title">Absensi DPUPR KSB</div>
     <div class="splash-spinner"></div>
     <div id="splashText" class="splash-text">Memuat aplikasi...</div>
@@ -56,7 +58,7 @@
 
   <section id="loginView" class="login-screen hidden">
     <div class="login-card">
-      <div class="brand-badge">DPUPR</div>
+      <div class="login-brand-logos"><img src="/assets/brand-logos.webp" width="720" height="250" alt="Identitas Pemerintah Kabupaten Sumbawa Barat, PUPR, BerAKHLAK, dan Bangga Melayani Bangsa"></div>
       <h1>Absensi DPUPR KSB</h1>
 
       <label class="field">
@@ -106,6 +108,6 @@
 
   <div id="modalRoot" class="modal-root hidden"></div>
 
-  <script src="/assets/app.js?v=262"></script>
+  <script src="/assets/app.js?v=270"></script>
 </body>
 </html>

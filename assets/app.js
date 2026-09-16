@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.6.2',
+  version: '2.7.0',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -16,6 +16,7 @@ const APP = {
   cameraStream: null,
   currentAttendance: null,
   currentCoords: null,
+  currentLocationCheck: null,
   selfieData: '',
   busyCount: 0,
   adminData: {
@@ -191,6 +192,145 @@ function fmtDate(v){
   if(idx < 0 || idx > 11) return raw;
 
   return `${Number(day)} ${months[idx]} ${year}`;
+}
+
+
+function haversineMeters(lat1,lon1,lat2,lon2){
+  const R=6371000;
+  const toRad=x=>x*Math.PI/180;
+  const dLat=toRad(lat2-lat1);
+  const dLon=toRad(lon2-lon1);
+  const a=
+    Math.sin(dLat/2)**2+
+    Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+
+  return Math.round(2*R*Math.asin(Math.sqrt(a)));
+}
+
+function formatMeters(v){
+  const n=Number(v);
+  if(!Number.isFinite(n)) return '-';
+  if(n>=1000) return `${(n/1000).toFixed(n>=10000 ? 0 : 1)} km`;
+  return `${Math.round(n)} m`;
+}
+
+function getAttendanceLocationRule(type,ref){
+  const t=String(type || '').toUpperCase();
+
+  if(t==='MASUK' || t==='PULANG'){
+    return APP.home?.attendanceLocation || null;
+  }
+
+  if(t==='APEL_PAGI' || t==='APEL_SORE'){
+    const wanted=t==='APEL_SORE' ? 'SORE' : 'PAGI';
+    const row=(APP.home?.apel || []).find(x=>
+      String(x.idApel || '')===String(ref || '') ||
+      String(x.jenisApel || '').toUpperCase()===wanted
+    );
+    return row?.locationRule || null;
+  }
+
+  if(t==='KEGIATAN'){
+    const row=(APP.home?.todayActivities || []).find(
+      x=>String(x.idKegiatan || '')===String(ref || '')
+    );
+    return row?.locationRule || null;
+  }
+
+  return null;
+}
+
+function evaluateAttendanceLocation(coords,rule){
+  if(!coords){
+    return {ok:false,reason:'GPS_INVALID'};
+  }
+
+  const accuracy=Math.round(Number(coords.accuracy) || 0);
+
+  if(!rule){
+    return {
+      ok:true,
+      reason:'RULE_SERVER',
+      accuracy,
+      distance:null,
+      radius:null,
+      locationName:'Lokasi absensi'
+    };
+  }
+
+  const accuracyLimit=Number(rule.batasAkurasiMeter);
+  const accuracyOk=
+    !Number.isFinite(accuracyLimit) ||
+    accuracy<=accuracyLimit;
+
+  if(!accuracyOk){
+    return {
+      ok:false,
+      reason:'ACCURACY',
+      accuracy,
+      accuracyLimit,
+      distance:null,
+      radius:Number(rule.radiusMeter),
+      locationName:rule.locationName || 'Lokasi absensi'
+    };
+  }
+
+  if(String(rule.mode || '').toUpperCase()==='LOKASI_AKTUAL'){
+    return {
+      ok:true,
+      reason:'OK',
+      accuracy,
+      accuracyLimit,
+      distance:null,
+      radius:null,
+      locationName:rule.locationName || 'Lokasi aktual'
+    };
+  }
+
+  const lat=Number(rule.latitude);
+  const lon=Number(rule.longitude);
+  const radius=Number(rule.radiusMeter);
+
+  if(!Number.isFinite(lat) || !Number.isFinite(lon)){
+    return {
+      ok:true,
+      reason:'RULE_SERVER',
+      accuracy,
+      accuracyLimit,
+      distance:null,
+      radius:Number.isFinite(radius) ? radius : null,
+      locationName:rule.locationName || 'Lokasi absensi'
+    };
+  }
+
+  const distance=haversineMeters(
+    Number(coords.latitude),
+    Number(coords.longitude),
+    lat,
+    lon
+  );
+
+  if(Number.isFinite(radius) && distance>radius){
+    return {
+      ok:false,
+      reason:'OUTSIDE',
+      accuracy,
+      accuracyLimit,
+      distance,
+      radius,
+      locationName:rule.locationName || 'Lokasi absensi'
+    };
+  }
+
+  return {
+    ok:true,
+    reason:'OK',
+    accuracy,
+    accuracyLimit,
+    distance,
+    radius:Number.isFinite(radius) ? radius : null,
+    locationName:rule.locationName || 'Lokasi absensi'
+  };
 }
 
 async function login(){
@@ -2000,35 +2140,94 @@ function openDeviceReset(id,name){
   });
 }
 
-function renderAccount(){
+async function renderAccount(){
   const u=APP.user||{};
+
   page(`
     <div class="card">
       <div class="profile-head">
         <div class="profile-avatar">${esc((u.nama||'A').slice(0,1).toUpperCase())}</div>
-        <div><div class="profile-name">${esc(u.nama||'-')}</div><div class="muted">${esc(u.jabatan||'-')}</div></div>
+        <div>
+          <div class="profile-name">${esc(u.nama||'-')}</div>
+          <div class="muted">${esc(u.jabatan||'-')}</div>
+        </div>
       </div>
     </div>
 
     <div class="card">
       <div class="list">
-        <div class="list-item"><div class="list-title">ID / NIP</div><div class="list-meta">${esc(u.nip || u.idPegawai || '-')}</div></div>
-        <div class="list-item"><div class="list-title">Bidang</div><div class="list-meta">${esc(u.bidang || '-')}</div></div>
-        <div class="list-item"><div class="list-title">Jenis Pegawai</div><div class="list-meta">${esc(u.jenisPegawai || (u.isTplp ? 'TPLP' : 'ASN'))}</div></div>
-        <div class="list-item"><div class="list-title">Perangkat Absen</div><div class="list-meta">${u.deviceRegistered ? 'Terdaftar' : 'Belum terdaftar'}</div></div>
-        <div class="list-item"><div class="list-title">Role</div><div class="list-meta">${esc(u.role || '-')}</div></div>
-      </div>
-      ${roleIsAdmin() ? `<button id="openAdminBtn" class="btn secondary block" style="margin-top:14px" type="button">⚙ Panel Admin</button>` : ''}
-      <button id="logoutBtn" class="btn danger block" style="margin-top:10px" type="button">Keluar dari Aplikasi</button>
-    </div>`);
+        <div class="list-item">
+          <div class="list-title">ID / NIP</div>
+          <div class="list-meta">${esc(u.nip || u.idPegawai || '-')}</div>
+        </div>
 
-  $('openAdminBtn')?.addEventListener('click', ()=>navigate('admin'));
-  $('logoutBtn').addEventListener('click', logout);
+        <div class="list-item">
+          <div class="list-title">Bidang</div>
+          <div class="list-meta">${esc(u.bidang || '-')}</div>
+        </div>
+
+        <div class="list-item">
+          <div class="list-title">Jenis Pegawai</div>
+          <div class="list-meta">${esc(u.jenisPegawai || (u.isTplp ? 'TPLP' : 'ASN'))}</div>
+        </div>
+
+        <div class="list-item">
+          <div class="list-title">Email Google</div>
+          <div class="list-meta">${esc(u.email || 'Belum diisi')}</div>
+        </div>
+
+        <div class="list-item">
+          <div class="list-title">Perangkat Absen</div>
+          <div class="list-meta" id="deviceStatusText">Memeriksa...</div>
+        </div>
+
+        <div class="list-item">
+          <div class="list-title">Role</div>
+          <div class="list-meta">${esc(u.role || '-')}</div>
+        </div>
+      </div>
+
+      ${roleIsAdmin()
+        ? `<button id="openAdminBtn" class="btn secondary block" style="margin-top:14px" type="button">⚙ Panel Admin</button>`
+        : ''}
+
+      <button id="logoutBtn" class="btn danger block" style="margin-top:10px" type="button">
+        Keluar dari Aplikasi
+      </button>
+    </div>
+  `);
+
+  $('openAdminBtn')?.addEventListener('click',()=>navigate('admin'));
+  $('logoutBtn')?.addEventListener('click',logout);
+
+  try{
+    const state=await api(
+      'device_status',
+      {
+        deviceId:DEVICE.id,
+        deviceKey:DEVICE.key
+      },
+      {timeout:30000}
+    );
+
+    const el=$('deviceStatusText');
+    if(el) el.textContent=state?.label || 'Belum diaktifkan';
+
+    if(state?.currentDevice){
+      APP.user={...APP.user,deviceRegistered:true};
+      if(APP.home?.user){
+        APP.home.user.deviceRegistered=true;
+      }
+    }
+  }catch(e){
+    const el=$('deviceStatusText');
+    if(el) el.textContent='Tidak dapat memeriksa';
+  }
 }
 
-function openModal(html){
+function openModal(html,panelClass=''){
   const root=$('modalRoot');
-  root.innerHTML=`<div class="modal-panel">${html}</div>`;
+  root.innerHTML=`<div class="modal-panel ${esc(panelClass)}">${html}</div>`;
   root.classList.remove('hidden');
 }
 
@@ -2042,43 +2241,228 @@ function closeModal(){
 async function openAttendance(type,ref,title){
   APP.currentAttendance={type,ref,title};
   APP.currentCoords=null;
+  APP.currentLocationCheck=null;
   APP.selfieData='';
 
   openModal(`
-    <div class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="attendance-flow attendance-checking">
+      <div class="modal-head">
+        <h2>${esc(title)}</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
 
-    <div class="gps-panel">
-      <div class="gps-box"><b>GPS</b><span id="attGpsStatus">Mencari...</span></div>
-      <div class="gps-box"><b>Akurasi</b><span id="attGpsAccuracy">-</span></div>
+      <div class="attendance-locating">
+        <span class="spinner dark"></span>
+        <b>Memeriksa lokasi...</b>
+        <small>GPS dicari dulu sebelum kamera dibuka.</small>
+      </div>
     </div>
+  `,'attendance-modal-panel');
 
-    <div class="camera-wrap">
-      <video id="attVideo" autoplay playsinline muted></video>
-      <canvas id="attCanvas"></canvas>
-      <img id="attPreview" class="hidden" alt="Selfie">
+  try{
+    const coords=await getBestAttendancePosition();
+
+    if(!coords || !$('modalRoot') || $('modalRoot').classList.contains('hidden')){
+      return;
+    }
+
+    APP.currentCoords=coords;
+
+    const rule=getAttendanceLocationRule(type,ref);
+    const check=evaluateAttendanceLocation(coords,rule);
+    APP.currentLocationCheck=check;
+
+    if(!check.ok){
+      return renderAttendanceLocationBlocked(check);
+    }
+
+    renderAttendanceCamera(check);
+    await startCamera();
+  }catch(e){
+    renderAttendanceGpsError(e);
+  }
+}
+
+function getBestAttendancePosition(){
+  return new Promise((resolve,reject)=>{
+    if(!navigator.geolocation){
+      reject(new Error('GPS tidak didukung oleh perangkat ini.'));
+      return;
+    }
+
+    let best=null;
+    let watchId=null;
+    let timer=null;
+    let finished=false;
+
+    const done=(err)=>{
+      if(finished) return;
+      finished=true;
+
+      if(watchId!==null){
+        try{ navigator.geolocation.clearWatch(watchId); }catch(_){}
+      }
+      if(timer) clearTimeout(timer);
+
+      if(best){
+        resolve(best.coords);
+      }else{
+        reject(err || new Error('GPS tidak dapat dibaca.'));
+      }
+    };
+
+    try{
+      watchId=navigator.geolocation.watchPosition(pos=>{
+        if(!best || pos.coords.accuracy < best.coords.accuracy){
+          best=pos;
+        }
+
+        if(pos.coords.accuracy<=20){
+          done();
+        }
+      },err=>done(err),{
+        enableHighAccuracy:true,
+        maximumAge:3000,
+        timeout:8000
+      });
+
+      timer=setTimeout(()=>done(),6500);
+    }catch(e){
+      done(e);
+    }
+  });
+}
+
+function renderAttendanceLocationBlocked(check){
+  const outside=check.reason==='OUTSIDE';
+  const accuracyBad=check.reason==='ACCURACY';
+
+  const title=outside
+    ? 'Di luar radius lokasi'
+    : accuracyBad
+      ? 'Akurasi GPS belum cukup'
+      : 'Lokasi belum dapat digunakan';
+
+  const message=outside
+    ? 'Anda berada di luar radius lokasi absensi.'
+    : accuracyBad
+      ? 'GPS belum cukup akurat. Coba lagi di area yang lebih terbuka.'
+      : 'Lokasi belum dapat diverifikasi.';
+
+  const details=[
+    check.locationName ? `Lokasi: ${check.locationName}` : '',
+    Number.isFinite(Number(check.distance))
+      ? `Jarak: ${formatMeters(check.distance)}`
+      : '',
+    Number.isFinite(Number(check.radius))
+      ? `Radius: ${formatMeters(check.radius)}`
+      : '',
+    `Akurasi GPS: ±${Math.round(Number(check.accuracy)||0)} m`
+  ].filter(Boolean);
+
+  openModal(`
+    <div class="attendance-flow attendance-blocked">
+      <div class="attendance-warning-icon">ⓘ</div>
+      <h2>${esc(title)}</h2>
+      <p>${esc(message)}</p>
+
+      <div class="attendance-warning-details">
+        ${details.map(x=>`<span>${esc(x)}</span>`).join('')}
+      </div>
+
+      <div class="form-actions attendance-block-actions">
+        <button id="closeLocationBlockBtn" class="btn ghost" type="button">Tutup</button>
+        <button id="retryLocationBtn" class="btn primary" type="button">Coba GPS Lagi</button>
+      </div>
     </div>
+  `,'attendance-modal-panel');
 
-    <label class="field attendance-note">
-      <span>Keterangan (opsional)</span>
-      <textarea id="attNote" maxlength="300" placeholder="Boleh diisi, boleh dikosongkan"></textarea>
-    </label>
+  $('closeLocationBlockBtn')?.addEventListener('click',closeModal);
+  $('retryLocationBtn')?.addEventListener('click',()=>{
+    const x=APP.currentAttendance;
+    if(x) openAttendance(x.type,x.ref,x.title);
+  });
+}
 
-    <div class="form-actions">
-      <button id="captureBtn" class="btn secondary" type="button">Ambil Selfie</button>
-      <button id="submitAttendBtn" class="btn primary" type="button" disabled>Simpan Absen</button>
+function renderAttendanceGpsError(err){
+  openModal(`
+    <div class="attendance-flow attendance-blocked">
+      <div class="attendance-warning-icon">!</div>
+      <h2>GPS tidak tersedia</h2>
+      <p>${esc(err?.message || 'GPS tidak dapat dibaca.')}</p>
+      <div class="form-actions">
+        <button id="closeGpsErrorBtn" class="btn ghost" type="button">Tutup</button>
+        <button id="retryGpsBtn" class="btn primary" type="button">Coba Lagi</button>
+      </div>
     </div>
-  `);
+  `,'attendance-modal-panel');
 
-  $('captureBtn').addEventListener('click', captureSelfie);
-  $('submitAttendBtn').addEventListener('click', submitAttendance);
+  $('closeGpsErrorBtn')?.addEventListener('click',closeModal);
+  $('retryGpsBtn')?.addEventListener('click',()=>{
+    const x=APP.currentAttendance;
+    if(x) openAttendance(x.type,x.ref,x.title);
+  });
+}
 
-  await Promise.allSettled([startCamera(), getAttendanceLocation()]);
+function renderAttendanceCamera(check){
+  const locationLine=Number.isFinite(Number(check.distance))
+    ? `${check.locationName || 'Lokasi'} • Jarak ${formatMeters(check.distance)}`
+    : (check.locationName || 'Lokasi absensi');
+
+  const radiusLine=Number.isFinite(Number(check.radius))
+    ? `Radius ${formatMeters(check.radius)} • Akurasi ±${Math.round(Number(check.accuracy)||0)} m`
+    : `Akurasi ±${Math.round(Number(check.accuracy)||0)} m`;
+
+  openModal(`
+    <div class="attendance-flow attendance-camera-step">
+      <div class="attendance-compact-head">
+        <div>
+          <b>${esc(APP.currentAttendance?.title || 'Absensi')}</b>
+          <span>Lokasi sesuai ✓</span>
+        </div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+
+      <div class="attendance-location-strip">
+        <b>${esc(locationLine)}</b>
+        <span>${esc(radiusLine)}</span>
+      </div>
+
+      <div class="camera-wrap attendance-camera-wrap">
+        <video id="attVideo" autoplay playsinline muted></video>
+        <canvas id="attCanvas"></canvas>
+        <img id="attPreview" class="hidden" alt="Selfie">
+      </div>
+
+      <label class="field attendance-note compact">
+        <span>Keterangan (opsional)</span>
+        <input id="attNote" maxlength="300" placeholder="Boleh dikosongkan">
+      </label>
+
+      <div class="form-actions attendance-sticky-actions">
+        <button id="captureBtn" class="btn secondary" type="button">Ambil Selfie</button>
+        <button id="submitAttendBtn" class="btn primary" type="button" disabled>Kirim Absen</button>
+      </div>
+    </div>
+  `,'attendance-modal-panel');
+
+  $('captureBtn')?.addEventListener('click',captureSelfie);
+  $('submitAttendBtn')?.addEventListener('click',submitAttendance);
 }
 
 async function startCamera(){
   try{
-    APP.cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480},height:{ideal:360}},audio:false});
-    $('attVideo').srcObject=APP.cameraStream;
+    APP.cameraStream=await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:'user',
+        width:{ideal:480},
+        height:{ideal:360}
+      },
+      audio:false
+    });
+
+    const video=$('attVideo');
+    if(video) video.srcObject=APP.cameraStream;
   }catch(e){
     toast('Kamera tidak dapat dibuka. Periksa izin kamera.','error');
   }
@@ -2091,69 +2475,21 @@ function stopCamera(){
   }
 }
 
-async function getAttendanceLocation(){
-  if(!navigator.geolocation){
-    $('attGpsStatus').textContent='Tidak didukung';
-    return;
-  }
-
-  const statusEl=$('attGpsStatus');
-  const accEl=$('attGpsAccuracy');
-
-  let best=null;
-  let watchId=null;
-  let timer=null;
-  let settled=false;
-
-  const finish=(err)=>{
-    if(settled) return;
-    settled=true;
-
-    if(watchId!==null) navigator.geolocation.clearWatch(watchId);
-    if(timer) clearTimeout(timer);
-
-    if(best){
-      APP.currentCoords=best.coords;
-      statusEl.textContent='Ditemukan';
-      accEl.textContent=`±${Math.round(best.coords.accuracy)} m`;
-      updateAttendReady();
-      return;
-    }
-
-    statusEl.textContent='Gagal';
-    accEl.textContent='-';
-    toast(err?.message || 'GPS tidak dapat dibaca.','error');
-  };
-
-  try{
-    watchId=navigator.geolocation.watchPosition(pos=>{
-      if(!best || pos.coords.accuracy < best.coords.accuracy){
-        best=pos;
-        APP.currentCoords=pos.coords;
-        statusEl.textContent='Mencari titik terbaik...';
-        accEl.textContent=`±${Math.round(pos.coords.accuracy)} m`;
-        updateAttendReady();
-      }
-
-      if(pos.coords.accuracy<=30){
-        finish();
-      }
-    },err=>finish(err),{
-      enableHighAccuracy:true,
-      maximumAge:5000,
-      timeout:8000
-    });
-
-    timer=setTimeout(()=>finish(),7000);
-  }catch(e){
-    finish(e);
-  }
-}
-
-function captureSelfie(){
+async function captureSelfie(){
   const video=$('attVideo');
   const canvas=$('attCanvas');
   const preview=$('attPreview');
+  const btn=$('captureBtn');
+
+  if(APP.selfieData){
+    APP.selfieData='';
+    preview?.classList.add('hidden');
+    video?.classList.remove('hidden');
+    if(btn) btn.textContent='Ambil Selfie';
+    updateAttendReady();
+    await startCamera();
+    return;
+  }
 
   if(!video?.videoWidth){
     toast('Tunggu kamera siap.','warning');
@@ -2179,7 +2515,10 @@ function captureSelfie(){
   preview.src=APP.selfieData;
   preview.classList.remove('hidden');
   video.classList.add('hidden');
-  $('captureBtn').textContent='Ulangi Selfie';
+
+  stopCamera();
+
+  if(btn) btn.textContent='Ulangi Selfie';
   updateAttendReady();
 }
 
@@ -2224,8 +2563,10 @@ function applyAttendanceToHome(data){
     }
   }
 
-  if(data.deviceRegisteredNow && APP.home.user){
-    APP.home.user.deviceRegistered=true;
+  if(data.deviceRegisteredNow){
+    if(APP.home?.user){
+      APP.home.user.deviceRegistered=true;
+    }
     APP.user={...APP.user,deviceRegistered:true};
   }
 

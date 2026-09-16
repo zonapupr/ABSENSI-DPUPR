@@ -599,3 +599,184 @@ textarea{min-height:92px;resize:vertical}
     grid-template-columns:repeat(3,minmax(0,1fr));
   }
 }
+
+
+/* ===== V2.6.3 IDENTITAS 4 LOGO ===== */
+.splash-brand{
+  width:min(82vw,330px);
+  background:#fff;
+  border-radius:20px;
+  padding:8px 12px;
+  box-shadow:0 12px 30px rgba(0,0,0,.15);
+}
+.splash-brand img,
+.login-brand-logos img{
+  display:block;
+  width:100%;
+  height:auto;
+}
+.login-brand-logos{
+  width:min(100%,320px);
+  margin:0 auto 18px;
+  background:#fff;
+  border:1px solid #e4eaf1;
+  border-radius:18px;
+  padding:8px 10px;
+}
+.login-card h1{
+  margin-top:12px;
+  text-align:center;
+}
+
+
+/* ===== V2.7 GPS-FIRST + COMPACT SELFIE ===== */
+.attendance-modal-panel{
+  width:min(100%,520px);
+  max-height:94dvh;
+  overflow:hidden;
+  padding:16px;
+}
+.attendance-flow{
+  min-height:0;
+}
+.attendance-locating{
+  min-height:220px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  gap:10px;
+  text-align:center;
+  color:var(--text);
+}
+.attendance-locating small{
+  color:var(--muted);
+}
+.spinner.dark{
+  border-color:#d7e1ec;
+  border-top-color:var(--blue);
+}
+.attendance-blocked{
+  text-align:center;
+  padding:18px 4px 4px;
+}
+.attendance-warning-icon{
+  width:66px;
+  height:66px;
+  margin:4px auto 16px;
+  border:4px solid #e94040;
+  color:#e94040;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  font-size:36px;
+  font-weight:900;
+}
+.attendance-blocked h2{
+  margin:0 0 8px;
+}
+.attendance-blocked p{
+  margin:0 auto 14px;
+  max-width:390px;
+  color:#536a83;
+}
+.attendance-warning-details{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  padding:12px;
+  border-radius:14px;
+  background:#f5f8fb;
+  color:#334b63;
+  font-size:13px;
+}
+.attendance-compact-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  margin-bottom:9px;
+}
+.attendance-compact-head>div{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.attendance-compact-head b{
+  font-size:17px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.attendance-compact-head span{
+  color:#2d8a4a;
+  font-size:12px;
+  font-weight:850;
+}
+.attendance-location-strip{
+  padding:9px 11px;
+  border-radius:13px;
+  background:#edf7f0;
+  margin-bottom:9px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.attendance-location-strip b{
+  font-size:12px;
+  color:#215e39;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.attendance-location-strip span{
+  color:#587066;
+  font-size:11px;
+}
+.camera-wrap.attendance-camera-wrap{
+  height:clamp(205px,32dvh,270px);
+  aspect-ratio:auto;
+  border-radius:16px;
+}
+.attendance-note.compact{
+  margin-top:9px;
+}
+.attendance-note.compact span{
+  margin-bottom:5px;
+}
+.attendance-note.compact input{
+  min-height:44px;
+  padding:10px 12px;
+}
+.attendance-sticky-actions{
+  margin-top:10px;
+  padding-top:2px;
+  background:#fff;
+}
+.attendance-sticky-actions .btn{
+  min-height:46px;
+}
+@media(max-width:640px){
+  .attendance-modal-panel{
+    padding:14px;
+    border-radius:24px 24px 18px 18px;
+  }
+  .attendance-modal-panel .form-actions{
+    flex-direction:row;
+  }
+  .camera-wrap.attendance-camera-wrap{
+    height:clamp(195px,30dvh,245px);
+  }
+  .attendance-block-actions{
+    flex-direction:row;
+  }
+}
+@media(max-height:650px){
+  .camera-wrap.attendance-camera-wrap{
+    height:190px;
+  }
+  .attendance-note.compact span{
+    display:none;
+  }
+}
