@@ -1,5 +1,5 @@
 const APP = {
-  version: '2.8.2',
+  version: '2.8.3',
   api: '/api/gas',
   timeout: 30000,
   token: localStorage.getItem('abs_token') || '',
@@ -1239,7 +1239,7 @@ function paintMonthlyRecap(data){
     <div class="card recap-summary-card">
       <div class="recap-summary-head">
         <div>
-          <div class="recap-summary-title">Rekap Absensi</div>
+          <div class="recap-summary-title">Rekap Absensi Per Bulan</div>
           <div class="recap-summary-sub">${esc(isTplp ? 'TPLP' : 'ASN')} • ${esc(user.bidang || '-')}</div>
         </div>
 
